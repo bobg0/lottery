@@ -21,8 +21,9 @@
       --accent: #1a5c3a;
       --accent-light: #e6f2ec;
       --danger: #b91c1c;
+      --danger-light: #fdf2f2;
       --nav-h: 56px;
-      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe: env(safe-area-inset-bottom, 0px);
     }
 
     html, body {
@@ -38,7 +39,7 @@
     #app {
       max-width: 480px;
       margin: 0 auto;
-      padding-bottom: calc(var(--nav-h) + var(--safe-bottom) + 8px);
+      padding-bottom: calc(var(--nav-h) + var(--safe) + 8px);
     }
 
     /* SCREENS */
@@ -53,30 +54,18 @@
       justify-content: space-between;
       padding: 20px 20px 0;
     }
-    .page-title {
-      font-size: 24px;
-      font-weight: 700;
-      letter-spacing: -0.4px;
-    }
-    .page-date {
-      font-size: 14px;
-      color: var(--muted);
-    }
+    .page-title { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
+    .page-date { font-size: 14px; color: var(--muted); }
 
-    /* SECTIONS */
+    /* SECTIONS — white blocks with spacing */
     .section {
-      padding: 18px 20px;
-      border-bottom: 1px solid var(--border);
       background: var(--surface);
       margin-top: 12px;
+      padding: 18px 20px;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
     }
-    .section:first-of-type {
-      margin-top: 12px;
-    }
-    .section + .section {
-      margin-top: 0;
-      border-top: none;
-    }
+    .section + .section { margin-top: 0; border-top: none; }
 
     .section-label {
       font-size: 11px;
@@ -89,13 +78,26 @@
       justify-content: space-between;
       align-items: center;
     }
-    .section-label span {
-      font-size: 13px;
-      font-weight: 500;
+    .section-label .lval {
+      font-size: 15px;
+      font-weight: 600;
       text-transform: none;
       letter-spacing: 0;
       color: var(--text);
     }
+
+    /* GOAL BADGE */
+    .goal-badge {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 1px 7px;
+      border-radius: 20px;
+      background: var(--border);
+      color: var(--muted);
+      margin-left: 6px;
+    }
+    .goal-badge.done { background: var(--accent-light); color: var(--accent); }
 
     /* LARGE ACTION BUTTONS */
     .action-btn {
@@ -113,6 +115,7 @@
       color: #fff;
       -webkit-tap-highlight-color: transparent;
     }
+    .action-btn + .action-btn { margin-top: 10px; }
     .action-btn:active { opacity: 0.8; }
     .action-btn:disabled { opacity: 0.38; cursor: default; }
     .action-btn.accent { background: var(--accent); }
@@ -124,32 +127,40 @@
     .action-btn.danger {
       background: transparent;
       color: var(--danger);
-      border: 1px solid currentColor;
+      border: 1px solid var(--danger);
     }
 
     /* STAT LINE */
-    .stat-line {
-      font-size: 14px;
-      color: var(--muted);
-      margin-top: 10px;
-    }
-    .stat-line strong {
-      color: var(--text);
-      font-weight: 600;
-    }
+    .stat-line { font-size: 14px; color: var(--muted); margin-top: 10px; }
+    .stat-line strong { color: var(--text); font-weight: 600; }
 
-    /* QUESTIONS INPUT */
-    .q-row {
+    /* QUESTION STEPPER */
+    .q-stepper {
       display: flex;
-      gap: 8px;
-      align-items: stretch;
+      gap: 10px;
+      margin-bottom: 12px;
     }
+    .stepper-btn {
+      flex: 1;
+      height: 56px;
+      font-size: 22px;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg);
+      color: var(--text);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .stepper-btn:active { background: var(--border); }
+
+    /* MANUAL INPUT ROW */
+    .q-manual-row { display: flex; gap: 8px; margin-bottom: 12px; }
     .q-input {
       flex: 1;
-      min-height: 52px;
-      padding: 0 14px;
-      font-size: 18px;
-      font-weight: 600;
+      min-height: 44px;
+      padding: 0 12px;
+      font-size: 16px;
       border: 1px solid var(--border);
       border-radius: 10px;
       background: var(--bg);
@@ -158,10 +169,10 @@
       -webkit-appearance: none;
     }
     .q-input:focus { border-color: var(--accent); }
-    .q-save-btn {
-      min-height: 52px;
-      padding: 0 20px;
-      font-size: 15px;
+    .q-set-btn {
+      min-height: 44px;
+      padding: 0 16px;
+      font-size: 14px;
       font-weight: 600;
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -171,23 +182,34 @@
       -webkit-tap-highlight-color: transparent;
       white-space: nowrap;
     }
-    .q-save-btn:active { opacity: 0.7; }
+    .q-set-btn:active { opacity: 0.7; }
 
-    /* GOAL BADGE */
-    .goal-badge {
-      display: inline-block;
-      font-size: 12px;
-      font-weight: 600;
-      padding: 2px 8px;
-      border-radius: 20px;
-      background: var(--border);
-      color: var(--muted);
-      margin-left: 8px;
+    /* DEFICIT SUMMARY */
+    .deficit-summary {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+      gap: 8px;
     }
-    .goal-badge.done {
-      background: var(--accent-light);
-      color: var(--accent);
+    .deficit-btn {
+      background: none;
+      border: none;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      padding: 4px 0;
+      color: var(--text);
+      text-align: left;
+      -webkit-tap-highlight-color: transparent;
+      border-bottom: 1px dashed var(--border);
     }
+    .deficit-btn:active { opacity: 0.7; }
+    .deficit-btn.neg { color: var(--danger); }
+    .deficit-btn.pos { color: var(--accent); }
+    .overall-label { font-size: 13px; color: var(--muted); text-align: right; }
+    .overall-label.neg { color: var(--danger); }
+    .overall-label.pos { color: var(--accent); }
 
     /* SPIN TYPE TOGGLE */
     .type-toggle {
@@ -208,15 +230,10 @@
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
     }
-    .type-toggle-btn.active {
-      background: var(--text);
-      color: #fff;
-      font-weight: 600;
-    }
     .type-toggle-btn:first-child { border-right: 1px solid var(--border); }
-    .type-toggle-btn.active + .type-toggle-btn { border-left: none; }
+    .type-toggle-btn.active { background: var(--text); color: #fff; font-weight: 600; }
 
-    /* RESULT AREA */
+    /* RESULT BOX */
     .result-box {
       margin-top: 14px;
       padding: 14px;
@@ -232,49 +249,70 @@
       color: var(--muted);
       margin-bottom: 4px;
     }
-    .result-text {
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--text);
-      line-height: 1.4;
-    }
+    .result-text { font-size: 15px; font-weight: 600; color: var(--text); line-height: 1.4; }
 
-    /* INVENTORY — CLIPS TABLE */
-    .clips-table { width: 100%; border-collapse: collapse; }
+    /* SPIN ACTIONS */
+    .spin-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .spin-actions .action-btn { flex: 1; min-height: 44px; font-size: 14px; margin-top: 0; }
+
+    /* UNDO ROW */
+    .undo-row { padding: 10px 20px 4px; text-align: center; }
+    .undo-btn {
+      background: none;
+      border: none;
+      font-size: 13px;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 6px 12px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .undo-btn:active:not(:disabled) { opacity: 0.7; }
+    .undo-btn:disabled { opacity: 0.3; cursor: default; }
+
+    /* BANKED REWARDS */
+    .banked-item {
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .banked-item:last-child { border-bottom: none; }
+    .banked-name { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 4px; line-height: 1.3; }
+    .banked-meta { font-size: 12px; color: var(--muted); }
+    .banked-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .banked-btn {
+      flex: 1;
+      height: 40px;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .banked-btn.claim { background: var(--text); color: #fff; border: none; }
+    .banked-btn.del { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+    .banked-btn:active { opacity: 0.75; }
+
+    /* CLIPS TABLE */
+    .clips-table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
     .clips-table tr { border-bottom: 1px solid var(--border); }
     .clips-table tr:last-child { border-bottom: none; }
-    .clips-table td {
-      padding: 10px 0;
-      font-size: 15px;
-      vertical-align: middle;
-    }
-    .clips-table td:last-child {
-      text-align: right;
-      font-weight: 600;
-      color: var(--text);
-    }
+    .clips-table td { padding: 10px 0; font-size: 15px; vertical-align: middle; }
+    .clips-table td:last-child { text-align: right; font-weight: 600; }
     .clip-swatch {
       display: inline-block;
-      width: 12px;
-      height: 12px;
+      width: 10px; height: 10px;
       border-radius: 50%;
       margin-right: 8px;
       vertical-align: middle;
     }
-    .swatch-red    { background: #e74c3c; }
-    .swatch-blue   { background: #3498db; }
-    .swatch-green  { background: #27ae60; }
+    .swatch-red { background: #e74c3c; }
+    .swatch-blue { background: #3498db; }
+    .swatch-green { background: #27ae60; }
     .swatch-yellow { background: #f1c40f; }
     .swatch-purple { background: #9b59b6; }
     .swatch-orange { background: #e67e22; }
-    .swatch-gold   { background: #f5c518; }
+    .swatch-gold { background: #f5c518; }
 
-    .clips-summary {
-      font-size: 14px;
-      color: var(--muted);
-      margin-bottom: 14px;
-    }
-
+    .clips-summary { font-size: 14px; color: var(--muted); margin-bottom: 12px; }
     .cashin-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
     .cashin-btn {
       width: 100%;
@@ -291,27 +329,10 @@
       -webkit-tap-highlight-color: transparent;
     }
     .cashin-btn:active { opacity: 0.7; }
-    .cashin-btn:disabled { opacity: 0.38; cursor: default; }
-
-    .empty-msg {
-      font-size: 14px;
-      color: var(--muted);
-      padding: 8px 0;
-    }
+    .cashin-btn:disabled { opacity: 0.38; }
+    .empty-msg { font-size: 14px; color: var(--muted); padding: 6px 0; }
 
     /* PROGRESS */
-    .prog-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 11px 0;
-      border-bottom: 1px solid var(--border);
-      font-size: 15px;
-    }
-    .prog-row:last-child { border-bottom: none; }
-    .prog-row-label { color: var(--text); }
-    .prog-row-val { font-weight: 600; color: var(--text); }
-
     .prog-bar-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
     .prog-bar-row:last-child { border-bottom: none; }
     .prog-bar-meta {
@@ -321,46 +342,42 @@
       color: var(--muted);
       margin-bottom: 8px;
     }
-    .prog-track {
-      height: 4px;
-      background: var(--border);
-      border-radius: 2px;
-      overflow: hidden;
+    .prog-track { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+    .prog-fill { height: 100%; background: var(--accent); border-radius: 2px; max-width: 100%; }
+    .prog-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 15px;
     }
-    .prog-fill {
-      height: 100%;
-      background: var(--accent);
-      border-radius: 2px;
-      max-width: 100%;
-    }
+    .prog-row:last-child { border-bottom: none; }
+    .prog-row-val { font-weight: 600; }
 
-    /* HISTORY */
     .history-entry {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      padding: 11px 0;
+      padding: 10px 0;
       border-bottom: 1px solid var(--border);
       gap: 12px;
     }
     .history-entry:last-child { border-bottom: none; }
-    .history-left { font-size: 13px; color: var(--muted); line-height: 1.4; flex-shrink: 0; }
+    .history-left { font-size: 13px; color: var(--muted); flex-shrink: 0; line-height: 1.4; }
     .history-right { font-size: 14px; color: var(--text); text-align: right; line-height: 1.4; }
     .history-reward { font-size: 12px; color: var(--muted); }
 
     /* SETTINGS */
-    .reward-field {
-      padding: 11px 0;
-      border-bottom: 1px solid var(--border);
-    }
+    .reward-field { padding: 11px 0; border-bottom: 1px solid var(--border); }
     .reward-field:last-child { border-bottom: none; }
     .reward-field label {
       display: block;
-      font-size: 12px;
-      font-weight: 500;
+      font-size: 11px;
+      font-weight: 600;
       color: var(--muted);
       text-transform: uppercase;
-      letter-spacing: 0.6px;
+      letter-spacing: 0.7px;
       margin-bottom: 6px;
     }
     .reward-input {
@@ -374,12 +391,7 @@
       outline: none;
     }
     .reward-input:focus { border-color: var(--accent); }
-
-    .btn-stack {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
+    .btn-stack { display: flex; flex-direction: column; gap: 10px; }
 
     /* BOTTOM NAV */
     .bottom-nav {
@@ -387,8 +399,8 @@
       bottom: 0;
       left: 0;
       right: 0;
-      height: calc(var(--nav-h) + var(--safe-bottom));
-      padding-bottom: var(--safe-bottom);
+      height: calc(var(--nav-h) + var(--safe));
+      padding-bottom: var(--safe);
       background: var(--surface);
       border-top: 1px solid var(--border);
       display: flex;
@@ -405,10 +417,7 @@
       cursor: pointer;
       -webkit-tap-highlight-color: transparent;
     }
-    .nav-btn.active {
-      color: var(--accent);
-      font-weight: 700;
-    }
+    .nav-btn.active { color: var(--accent); font-weight: 700; }
 
     /* MODAL */
     .modal-overlay {
@@ -416,31 +425,89 @@
       inset: 0;
       background: rgba(0,0,0,0.45);
       display: flex;
-      align-items: center;
+      align-items: flex-end;
       justify-content: center;
       z-index: 999;
-      padding: 24px;
+      padding-bottom: var(--safe);
     }
     .modal-box {
       background: var(--surface);
-      border-radius: 14px;
-      padding: 24px 20px 20px;
+      border-radius: 14px 14px 0 0;
+      padding: 0;
       width: 100%;
-      max-width: 320px;
+      max-width: 480px;
+      max-height: 88vh;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
-    .modal-msg {
-      font-size: 15px;
-      color: var(--text);
-      margin-bottom: 20px;
-      line-height: 1.5;
-    }
-    .modal-actions {
+    .modal-header {
       display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+      z-index: 1;
+    }
+    .modal-title { font-size: 17px; font-weight: 700; }
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--accent);
+      cursor: pointer;
+      padding: 4px 0;
+    }
+    .modal-body { padding: 16px 20px 24px; }
+    .modal-msg { font-size: 15px; color: var(--text); margin-bottom: 20px; line-height: 1.5; }
+    .modal-actions { display: flex; gap: 8px; }
+    .modal-actions .action-btn { flex: 1; }
+
+    /* DEFICIT CHART PANEL */
+    .deficit-stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
       gap: 8px;
+      margin-bottom: 20px;
     }
-    .modal-actions .action-btn {
-      flex: 1;
+    .dstat-box {
+      background: var(--bg);
+      border-radius: 8px;
+      padding: 10px 12px;
     }
+    .dstat-val { font-size: 17px; font-weight: 700; color: var(--text); }
+    .dstat-val.neg { color: var(--danger); }
+    .dstat-val.pos { color: var(--accent); }
+    .dstat-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    .chart-section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .chart-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .chart-date { font-size: 11px; color: var(--muted); width: 40px; flex-shrink: 0; text-align: right; }
+    .chart-axis-wrap { flex: 1; height: 18px; position: relative; }
+    .chart-center { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--border); }
+    .chart-bar { position: absolute; top: 3px; bottom: 3px; border-radius: 2px; min-width: 2px; }
+    .chart-bar-pos { left: calc(50% + 1px); background: var(--accent); }
+    .chart-bar-neg { right: 50%; background: var(--danger); }
+    .chart-val { font-size: 11px; font-weight: 600; width: 28px; flex-shrink: 0; }
+    .chart-val.pos { color: var(--accent); }
+    .chart-val.neg { color: var(--danger); }
+    .chart-val.zero { color: var(--muted); }
+    .chart-empty { font-size: 14px; color: var(--muted); padding: 8px 0; }
   </style>
 </head>
 <body>
@@ -453,37 +520,47 @@
         <span class="page-date" id="today-date"></span>
       </div>
 
+      <!-- Practice Block -->
       <div class="section">
-        <div class="section-label">
-          Practice
-          <span id="practice-stat-inline">0 blocks</span>
-        </div>
+        <div class="section-label">Practice Block</div>
         <button class="action-btn" id="log-block-btn">Log Practice Block</button>
+        <div class="stat-line" id="block-stat-line">0 blocks today</div>
       </div>
 
+      <!-- Questions -->
       <div class="section">
         <div class="section-label">
-          Questions today
-          <span>
-            <span id="stat-questions-inline">0</span> / 10
-            <span class="goal-badge" id="daily-checkpoint-badge">0/10</span>
+          Questions
+          <span class="lval">
+            <span id="q-count">0</span> / 10
+            <span class="goal-badge" id="q-goal-badge">0/10</span>
           </span>
         </div>
-        <div class="q-row">
-          <input class="q-input" type="number" id="questions-input" min="0" max="9999" placeholder="0" inputmode="numeric" />
-          <button class="q-save-btn" id="save-questions-btn">Save</button>
+        <div class="q-stepper">
+          <button class="stepper-btn" id="q-minus2">−2</button>
+          <button class="stepper-btn" id="q-plus2">+2</button>
+        </div>
+        <div class="q-manual-row">
+          <input class="q-input" type="number" id="questions-input" min="0" max="9999" inputmode="numeric" placeholder="Set exact count..." />
+          <button class="q-set-btn" id="save-questions-btn">Set</button>
+        </div>
+        <div class="deficit-summary">
+          <button class="deficit-btn" id="daily-delta-btn">On pace</button>
+          <span class="overall-label" id="overall-delta-label"></span>
         </div>
       </div>
 
+      <!-- Workout -->
       <div class="section">
         <button class="action-btn" id="workout-btn">Mark Workout Done</button>
-        <div class="stat-line" id="workout-stat-line" style="display:none">Workout logged. Clip earned.</div>
+        <div class="stat-line hidden" id="workout-stat-line">Workout logged. Clip earned.</div>
       </div>
 
+      <!-- Spin -->
       <div class="section">
         <div class="section-label">
           Spin
-          <span id="spins-avail-label">0 available</span>
+          <span class="lval" id="spins-avail-label">0 available</span>
         </div>
         <div class="type-toggle" id="spin-type-toggle">
           <button class="type-toggle-btn active" data-spintype="practice">Practice</button>
@@ -491,12 +568,22 @@
         </div>
         <button class="action-btn accent" id="spin-btn">Spin</button>
         <div id="spin-result-area" class="result-box hidden"></div>
+        <div id="spin-actions" class="spin-actions hidden">
+          <button class="action-btn ghost" id="bank-reward-btn">Bank Reward</button>
+          <button class="action-btn" id="claim-now-btn">Claim Now</button>
+        </div>
       </div>
 
+      <!-- Bonus Wheel (conditional) -->
       <div class="section hidden" id="bonus-section" style="display:none">
         <div class="section-label">Bonus Wheel</div>
-        <div id="bonus-result-area" class="result-box" style="margin-bottom:14px;display:none"></div>
+        <div id="bonus-result-area" class="result-box hidden"></div>
         <button class="action-btn ghost" id="spin-bonus-btn">Spin Bonus Wheel</button>
+      </div>
+
+      <!-- Undo -->
+      <div class="undo-row">
+        <button class="undo-btn" id="undo-btn" disabled>Nothing to undo</button>
       </div>
     </section>
 
@@ -504,6 +591,11 @@
     <section id="screen-inventory" class="screen" style="display:none">
       <div class="page-header">
         <h1 class="page-title">Inventory</h1>
+      </div>
+
+      <div class="section" id="banked-rewards-section">
+        <div class="section-label">Banked Rewards</div>
+        <div id="banked-rewards-list"><p class="empty-msg">No banked rewards yet.</p></div>
       </div>
 
       <div class="section">
@@ -544,7 +636,7 @@
           <div class="prog-track"><div class="prog-fill" id="prog-days-bar" style="width:0%"></div></div>
         </div>
         <div class="prog-row">
-          <span class="prog-row-label">Questions this week</span>
+          <span>Questions this week</span>
           <span class="prog-row-val">
             <span id="prog-week-questions">0</span> / 70
             <span class="goal-badge" id="weekly-checkpoint-badge">0/70</span>
@@ -564,10 +656,8 @@
       </div>
 
       <div class="section">
-        <div class="section-label">History</div>
-        <div id="history-list">
-          <p class="empty-msg">No history yet.</p>
-        </div>
+        <div class="section-label">Spin History</div>
+        <div id="history-list"><p class="empty-msg">No history yet.</p></div>
       </div>
     </section>
 
@@ -576,21 +666,17 @@
       <div class="page-header">
         <h1 class="page-title">Settings</h1>
       </div>
-
       <div class="section">
         <div class="section-label">Practice Rewards</div>
         <div id="practice-reward-fields"></div>
       </div>
-
       <div class="section">
         <div class="section-label">Workout Rewards</div>
         <div id="workout-reward-fields"></div>
       </div>
-
       <div class="section">
         <button class="action-btn" id="save-rewards-btn">Save Reward Text</button>
       </div>
-
       <div class="section">
         <div class="section-label">Data</div>
         <div class="btn-stack">
@@ -614,11 +700,28 @@
   <!-- Confirm Modal -->
   <div id="confirm-overlay" class="modal-overlay hidden">
     <div class="modal-box">
-      <p id="confirm-msg" class="modal-msg"></p>
-      <div class="modal-actions">
-        <button class="action-btn ghost" id="confirm-no">Cancel</button>
-        <button class="action-btn danger" id="confirm-yes">Confirm</button>
+      <div class="modal-header">
+        <span class="modal-title">Confirm</span>
+        <button class="modal-close" id="confirm-no">Cancel</button>
       </div>
+      <div class="modal-body">
+        <p id="confirm-msg" class="modal-msg"></p>
+        <div class="modal-actions">
+          <button class="action-btn ghost" id="confirm-no2">Cancel</button>
+          <button class="action-btn danger" id="confirm-yes">Confirm</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deficit Detail Panel -->
+  <div id="deficit-overlay" class="modal-overlay hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span class="modal-title">Question Tracking</span>
+        <button class="modal-close" id="deficit-close">Done</button>
+      </div>
+      <div class="modal-body" id="deficit-body"></div>
     </div>
   </div>
 

@@ -1,0 +1,81 @@
+Revise the app logic and UI with better tracking and reward management.
+
+Important: keep the interface minimal and mobile-first. Do not make it cluttered.
+
+Practice question controls:
+- On the Today screen, add a simple question counter.
+- Add buttons:
+  +2 Questions
+  -2 Questions
+- Also allow manual editing of the question count if needed.
+- Question count should never go below 0.
+- Practice daily goal is 10 questions.
+- Practice total goal is 400 questions over 40 days.
+
+Practice blocks:
+- Keep “Add Practice Block” as a separate button.
+- 1 practice block = 25 minutes focused work/review.
+- 1 practice block gives 1 practice clip.
+- 2 practice clips = 1 available practice spin.
+- Practice reward claiming is locked until at least 3 practice blocks are completed today.
+
+Over-completion / under-completion:
+- For each day, calculate:
+  dailyGoal = 10 questions
+  dailyActual = questions completed today
+  dailyDelta = dailyActual - dailyGoal
+- If dailyDelta is negative, it is a deficit.
+- If dailyDelta is positive, it is surplus.
+- Track cumulative deficit/surplus across days:
+  cumulativeDelta = totalQuestionsCompleted - expectedQuestionsByToday
+- expectedQuestionsByToday = currentDayNumber * 10, capped at 400.
+
+Today screen:
+- Show questions today as:
+  “Questions: 8 / 10”
+- Show daily status:
+  “Deficit: -2” or “Surplus: +4” or “On pace”
+- Show cumulative status:
+  “Overall: -12 behind” or “Overall: +8 ahead”
+- Make the “Deficit / Surplus / On pace” element clickable.
+
+When the user clicks the deficit/surplus element:
+- Open a simple Deficit Detail view or panel.
+- Show a minimal daily chart of question delta for each day.
+- The chart can be plain CSS bars, no external chart library.
+- Negative days should extend left or downward.
+- Positive days should extend right or upward.
+- Also show:
+  total completed questions
+  expected completed questions by today
+  remaining questions
+  remaining days
+  required average questions/day from now on
+
+Reward bank:
+- Add a Banked Rewards section.
+- After each spin result, show two buttons:
+  1. Bank Reward
+  2. Claim Now
+- If Bank Reward is clicked, save the reward into a banked reward list.
+- If Claim Now is clicked, mark it as claimed immediately and add it to reward history.
+
+Banked reward list:
+- Each banked reward should show:
+  reward name
+  source habit: Practice or Workout
+  tier
+  estimated minutes
+  date earned
+- Each banked reward should have:
+  Claim / Spend button
+  Delete button
+- Claim / Spend subtracts the reward from the available bank and moves it to claimed history.
+- Delete removes it only after confirmation.
+
+Also add an Undo Last Action button:
+- It should undo the most recent question adjustment, practice block addition, workout completion, spin, bank, or claim action.
+- Keep this simple with a small action history stack in JavaScript.
+
+Do not add login, backend, external APIs, or libraries.
+Use localStorage only.

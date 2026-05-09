@@ -45,9 +45,9 @@ function todayStr() {
 
 function weekStartStr() {
   const d = new Date();
-  const day = d.getDay(); // 0=Sun
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday
-  const monday = new Date(d.setDate(diff));
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(new Date().setDate(diff));
   return monday.toISOString().slice(0, 10);
 }
 
@@ -73,32 +73,20 @@ function defaultState() {
   return {
     lastDate:  todayStr(),
     weekStart: weekStartStr(),
-
-    // Today
     practiceBlocks: 0,
     questionsToday: 0,
     workoutDone: false,
-
-    // Clip inventory
     practiceClips: Object.fromEntries(ALL_COLORS.map(c => [c, 0])),
     workoutClips:  Object.fromEntries(ALL_COLORS.map(c => [c, 0])),
-
-    // Spin tracking
-    practiceClipTotal: 0,   // lifetime practice clips earned (for spin calc)
+    practiceClipTotal: 0,
     practiceSpinsUsed: 0,
-    workoutClipTotal:  0,   // lifetime workout clips earned
+    workoutClipTotal:  0,
     workoutSpinsUsed:  0,
-
-    // Progress
     totalQuestions:  0,
     weekQuestions:   0,
     practiceDays:    0,
     weekWorkouts:    0,
-
-    // History
     history: [],
-
-    // Rewards
     rewards: JSON.parse(JSON.stringify(DEFAULT_REWARDS)),
   };
 }
@@ -108,17 +96,14 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState();
     const s = JSON.parse(raw);
-    // Ensure all keys exist
     const def = defaultState();
     for (const k of Object.keys(def)) {
       if (s[k] === undefined) s[k] = def[k];
     }
-    // Ensure all clip colors exist
     for (const c of ALL_COLORS) {
       if (s.practiceClips[c] === undefined) s.practiceClips[c] = 0;
       if (s.workoutClips[c] === undefined) s.workoutClips[c] = 0;
     }
-    // Ensure rewards keys exist
     for (const type of ['practice', 'workout']) {
       for (const tier of ['tier1', 'tier2', 'tier3', 'jackpot', 'bonus']) {
         if (!s.rewards[type][tier]) s.rewards[type][tier] = def.rewards[type][tier];
@@ -143,11 +128,7 @@ function checkDateReset() {
   const ws = weekStartStr();
 
   if (state.lastDate !== today) {
-    // If yesterday had practice blocks, count as a practice day
-    if (state.practiceBlocks > 0) {
-      state.practiceDays++;
-    }
-    // Reset daily
+    if (state.practiceBlocks > 0) state.practiceDays++;
     state.practiceBlocks = 0;
     state.questionsToday = 0;
     state.workoutDone = false;
@@ -201,13 +182,20 @@ function tierLabel(tier) {
 /* ─── Screens ─────────────────────────────────────────────────────────────── */
 
 let currentScreen = 'today';
+let spinType = 'practice';
 
 function showScreen(name) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.screen').forEach(s => {
+    s.classList.remove('active');
+    s.style.display = 'none';
+  });
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
 
   const screen = document.getElementById(`screen-${name}`);
-  if (screen) screen.classList.add('active');
+  if (screen) {
+    screen.classList.add('active');
+    screen.style.display = '';
+  }
 
   const btn = document.querySelector(`.nav-btn[data-screen="${name}"]`);
   if (btn) btn.classList.add('active');
@@ -229,15 +217,18 @@ let bonusSpinType = 'practice';
 let bonusSpinsRemaining = 0;
 
 function renderToday() {
-  document.getElementById('today-date').textContent = fmt(todayStr());
+  // Date
+  const d = new Date();
+  document.getElementById('today-date').textContent =
+    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-  document.getElementById('stat-blocks').textContent = state.practiceBlocks;
-  document.getElementById('stat-questions').textContent = state.questionsToday;
-  document.getElementById('stat-practice-spins').textContent = practiceSpinsAvail();
-  document.getElementById('stat-workout-spins').textContent = workoutSpinsAvail();
-  document.getElementById('stat-total-spins').textContent = totalSpinsAvail();
+  // Practice stat line
+  const blocks = state.practiceBlocks;
+  document.getElementById('practice-stat-inline').textContent =
+    blocks === 1 ? '1 block' : `${blocks} blocks`;
 
-  // Daily checkpoint badge
+  // Questions
+  document.getElementById('stat-questions-inline').textContent = state.questionsToday;
   const badge = document.getElementById('daily-checkpoint-badge');
   if (state.questionsToday >= 10) {
     badge.textContent = 'Done';
@@ -247,53 +238,65 @@ function renderToday() {
     badge.classList.remove('done');
   }
 
-  // Workout button
-  const wBtn = document.getElementById('workout-btn');
-  if (state.workoutDone) {
-    wBtn.textContent = 'Workout Done ✓';
-    wBtn.disabled = true;
-  } else {
-    wBtn.textContent = 'Mark Workout Done';
-    wBtn.disabled = false;
-  }
-
   // Questions input
   const qi = document.getElementById('questions-input');
   qi.value = state.questionsToday > 0 ? state.questionsToday : '';
-  qi.placeholder = state.questionsToday > 0 ? String(state.questionsToday) : '0';
+  qi.placeholder = '0';
 
-  // Spin select: only show available types
-  const selType = document.getElementById('spin-type-select');
+  // Workout button
+  const wBtn = document.getElementById('workout-btn');
+  const wLine = document.getElementById('workout-stat-line');
+  if (state.workoutDone) {
+    wBtn.textContent = 'Workout Done';
+    wBtn.disabled = true;
+    wLine.style.display = 'block';
+  } else {
+    wBtn.textContent = 'Mark Workout Done';
+    wBtn.disabled = false;
+    wLine.style.display = 'none';
+  }
+
+  // Spins available label
   const pAvail = practiceSpinsAvail();
   const wAvail = workoutSpinsAvail();
+  const currentAvail = spinType === 'practice' ? pAvail : wAvail;
+  const total = pAvail + wAvail;
+  document.getElementById('spins-avail-label').textContent =
+    total === 1 ? '1 available' : `${total} available`;
 
-  // Update spin button state
+  // Spin toggle: reflect current spinType
+  document.querySelectorAll('.type-toggle-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.spintype === spinType);
+  });
+
+  // Spin button state
   const spinBtn = document.getElementById('spin-btn');
-  const selectedType = selType.value;
-  const selectedAvail = selectedType === 'practice' ? pAvail : wAvail;
-
-  if (selectedType === 'practice' && pAvail > 0 && state.practiceBlocks < 3) {
+  if (spinType === 'practice' && pAvail > 0 && state.practiceBlocks < 3) {
     spinBtn.disabled = true;
-    spinBtn.textContent = 'Need 3 practice blocks first';
-  } else if (selectedAvail === 0) {
+    spinBtn.textContent = 'Need 3 blocks first';
+  } else if (currentAvail === 0) {
     spinBtn.disabled = true;
     spinBtn.textContent = 'No spins available';
   } else {
     spinBtn.disabled = false;
-    spinBtn.textContent = 'Spin the Wheel';
+    spinBtn.textContent = 'Spin';
   }
 
-  updateBonusCard();
+  updateBonusSection();
 }
 
-function updateBonusCard() {
-  const card = document.getElementById('bonus-card');
+function updateBonusSection() {
+  const section = document.getElementById('bonus-section');
   if (bonusSpinsRemaining > 0) {
-    card.classList.remove('hidden');
+    section.classList.remove('hidden');
+    section.style.display = '';
     const btn = document.getElementById('spin-bonus-btn');
-    btn.textContent = bonusSpinsRemaining === 1 ? 'Spin Bonus Wheel' : `Spin Bonus Wheel (×${bonusSpinsRemaining})`;
+    btn.textContent = bonusSpinsRemaining > 1
+      ? `Spin Bonus Wheel (${bonusSpinsRemaining} left)`
+      : 'Spin Bonus Wheel';
   } else {
-    card.classList.add('hidden');
+    section.classList.add('hidden');
+    section.style.display = 'none';
   }
 }
 
@@ -301,36 +304,30 @@ function doSpin(type) {
   const result = spinWheel();
   const reward = state.rewards[type][result] || '';
 
-  // Deduct spin
   if (type === 'practice') {
     state.practiceSpinsUsed++;
   } else {
     state.workoutSpinsUsed++;
   }
 
-  // Add to history
-  state.history.unshift({
-    date: todayStr(),
-    type,
-    tier: result,
-    reward,
-  });
+  state.history.unshift({ date: todayStr(), type, tier: result, reward });
   if (state.history.length > 60) state.history = state.history.slice(0, 60);
-
   saveState();
 
   const area = document.getElementById('spin-result-area');
   area.classList.remove('hidden');
 
   if (result === 'bonus') {
-    area.innerHTML = `<div class="result-tier">Bonus!</div><div class="result-text">Spin the bonus wheel to find out your extra challenge.</div>`;
+    area.innerHTML = `<div class="result-tier">Bonus</div><div class="result-text">Spin the bonus wheel to reveal your challenge.</div>`;
     bonusSpinType = type;
     bonusSpinsRemaining = 1;
-    updateBonusCard();
+
+    const bonusResultArea = document.getElementById('bonus-result-area');
+    bonusResultArea.style.display = 'none';
+    bonusResultArea.innerHTML = '';
   } else {
     area.innerHTML = `<div class="result-tier">${tierLabel(result)}</div><div class="result-text">${reward}</div>`;
     bonusSpinsRemaining = 0;
-    updateBonusCard();
   }
 
   renderToday();
@@ -340,18 +337,14 @@ function doBonus() {
   if (bonusSpinsRemaining <= 0) return;
 
   const result = spinBonus(bonusSpinType);
-  const area = document.getElementById('bonus-result-area');
-  area.innerHTML = `<div class="result-tier">Bonus Result</div><div class="result-text">${result}</div>`;
+  const bonusResultArea = document.getElementById('bonus-result-area');
+  bonusResultArea.style.display = 'block';
+  bonusResultArea.innerHTML = `<div class="result-tier">Bonus Result</div><div class="result-text">${result}</div>`;
 
-  // Check if it's a double spin
   const isDouble = result.toLowerCase().includes('twice');
-
   bonusSpinsRemaining--;
   if (isDouble) bonusSpinsRemaining += 2;
 
-  updateBonusCard();
-
-  // Add free clip if applicable
   if (result.toLowerCase().includes('free clip')) {
     const c = randomColor();
     state.practiceClips[c]++;
@@ -364,19 +357,25 @@ function doBonus() {
 
 /* ─── INVENTORY SCREEN ────────────────────────────────────────────────────── */
 
-function renderClipsGrid(containerId, clips) {
+function renderClipsTable(containerId, clips) {
   const el = document.getElementById(containerId);
   el.innerHTML = '';
+  let hasAny = false;
   for (const color of ALL_COLORS) {
     const count = clips[color] || 0;
-    const item = document.createElement('div');
-    item.className = 'clip-item';
-    item.innerHTML = `
-      <div class="clip-dot clip-${color}"></div>
-      <span class="clip-count">${count}</span>
-      <span class="clip-name">${color}</span>
+    if (count === 0) continue;
+    hasAny = true;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="clip-swatch swatch-${color}"></span>${color.charAt(0).toUpperCase() + color.slice(1)}</td>
+      <td>${count}</td>
     `;
-    el.appendChild(item);
+    el.appendChild(tr);
+  }
+  if (!hasAny) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="2" class="empty-msg">No clips yet.</td>`;
+    el.appendChild(tr);
   }
 }
 
@@ -385,32 +384,24 @@ function buildCashinButtons(clips, type) {
   section.innerHTML = '';
 
   const options = getCashinOptions(clips);
-  if (options.length === 0) {
-    section.innerHTML = '<p class="empty-msg" style="padding:0 0 4px">No matching clips to cash in yet.</p>';
-    return;
-  }
+  if (options.length === 0) return;
 
   for (const opt of options) {
     const btn = document.createElement('button');
     btn.className = 'cashin-btn';
     btn.textContent = opt.label;
     btn.addEventListener('click', () => {
-      if (!window.confirm(`Cash in ${opt.label.split(':')[0]}?`)) return;
-      // Remove clips
-      for (const [color, count] of Object.entries(opt.spend)) {
-        state[`${type}Clips`][color] -= count;
-      }
-      const reward = state.rewards[type][opt.tier] || tierLabel(opt.tier);
-      state.history.unshift({
-        date: todayStr(),
-        type: `${type} cash-in`,
-        tier: opt.tier,
-        reward,
+      showConfirm(`Cash in: ${opt.label}?`, () => {
+        for (const [color, count] of Object.entries(opt.spend)) {
+          state[`${type}Clips`][color] -= count;
+        }
+        const reward = state.rewards[type][opt.tier] || tierLabel(opt.tier);
+        state.history.unshift({ date: todayStr(), type: `${type} cash-in`, tier: opt.tier, reward });
+        if (state.history.length > 60) state.history = state.history.slice(0, 60);
+        saveState();
+        alert(`${tierLabel(opt.tier)} unlocked!\n\n${reward}`);
+        renderInventory();
       });
-      if (state.history.length > 60) state.history = state.history.slice(0, 60);
-      saveState();
-      alert(`${tierLabel(opt.tier)} unlocked!\n\n${reward}`);
-      renderInventory();
     });
     section.appendChild(btn);
   }
@@ -418,53 +409,44 @@ function buildCashinButtons(clips, type) {
 
 function getCashinOptions(clips) {
   const options = [];
-
-  // Check for 1 gold clip → Tier 3
   if (clips[GOLD] >= 1) {
-    options.push({
-      label: '1 gold clip: Tier 3',
-      tier: 'tier3',
-      spend: { gold: 1 },
-    });
+    options.push({ label: '1 gold clip — Tier 3', tier: 'tier3', spend: { gold: 1 } });
   }
-
-  // Check matching normal colors
   for (const color of CLIP_COLORS) {
     const count = clips[color] || 0;
     if (count >= 3) {
-      options.push({
-        label: `3 ${color} clips: Tier 3`,
-        tier: 'tier3',
-        spend: { [color]: 3 },
-      });
+      options.push({ label: `3 ${color} clips — Tier 3`, tier: 'tier3', spend: { [color]: 3 } });
     }
     if (count >= 2) {
-      options.push({
-        label: `2 ${color} clips: Tier 2`,
-        tier: 'tier2',
-        spend: { [color]: 2 },
-      });
+      options.push({ label: `2 ${color} clips — Tier 2`, tier: 'tier2', spend: { [color]: 2 } });
     }
   }
-
   return options;
 }
 
 function renderInventory() {
-  renderClipsGrid('practice-clips-grid', state.practiceClips);
-  renderClipsGrid('workout-clips-grid', state.workoutClips);
+  renderClipsTable('practice-clips-grid', state.practiceClips);
+  renderClipsTable('workout-clips-grid', state.workoutClips);
 
-  // Tier display
   const pTotal = totalClips(state.practiceClips);
   const wTotal = totalClips(state.workoutClips);
 
   const ptd = document.getElementById('practice-tier-display');
-  ptd.textContent = pTotal === 1 ? '1 clip — 1 more for a spin' :
-    pTotal > 1 ? `${pTotal} clips · ${Math.floor(pTotal / 2)} potential spin${Math.floor(pTotal / 2) !== 1 ? 's' : ''}` :
-    'No practice clips yet.';
+  if (pTotal === 0) {
+    ptd.textContent = 'No clips yet. Log practice blocks to earn clips.';
+  } else if (pTotal === 1) {
+    ptd.textContent = '1 clip — 1 more to unlock a spin';
+  } else {
+    const spins = Math.floor(pTotal / 2);
+    ptd.textContent = `${pTotal} clips — ${spins} spin${spins !== 1 ? 's' : ''} available`;
+  }
 
   const wtd = document.getElementById('workout-tier-display');
-  wtd.textContent = wTotal > 0 ? `${wTotal} clip${wTotal !== 1 ? 's' : ''}` : 'No workout clips yet.';
+  if (wTotal === 0) {
+    wtd.textContent = 'No clips yet. Complete workouts to earn clips.';
+  } else {
+    wtd.textContent = `${wTotal} clip${wTotal !== 1 ? 's' : ''} — ${wTotal} spin${wTotal !== 1 ? 's' : ''} available`;
+  }
 
   buildCashinButtons(state.practiceClips, 'practice');
   buildCashinButtons(state.workoutClips, 'workout');
@@ -481,13 +463,12 @@ function renderProgress() {
   document.getElementById('prog-questions-label').textContent = `${q} / 400`;
   document.getElementById('prog-days-label').textContent = `${d} / 40`;
   document.getElementById('prog-workouts-label').textContent = `${w} / 4`;
-  document.getElementById('prog-week-questions').textContent = `${wq} / 70`;
+  document.getElementById('prog-week-questions').textContent = wq;
 
   setWidth('prog-questions-bar', Math.min(100, (q / 400) * 100));
   setWidth('prog-days-bar', Math.min(100, (d / 40) * 100));
   setWidth('prog-workouts-bar', Math.min(100, (w / 4) * 100));
 
-  // Weekly checkpoint
   const wb = document.getElementById('weekly-checkpoint-badge');
   if (wq >= 70) {
     wb.textContent = 'Done';
@@ -497,7 +478,6 @@ function renderProgress() {
     wb.classList.remove('done');
   }
 
-  // History
   const listEl = document.getElementById('history-list');
   if (state.history.length === 0) {
     listEl.innerHTML = '<p class="empty-msg">No history yet.</p>';
@@ -508,8 +488,8 @@ function renderProgress() {
     const row = document.createElement('div');
     row.className = 'history-entry';
     row.innerHTML = `
-      <span class="history-date">${fmt(entry.date)}<br>${entry.type}</span>
-      <span class="history-detail">${tierLabel(entry.tier)}<br><span style="color:var(--text-muted);font-size:12px">${entry.reward || ''}</span></span>
+      <div class="history-left">${fmt(entry.date)}<br>${entry.type}</div>
+      <div class="history-right">${tierLabel(entry.tier)}<br><span class="history-reward">${entry.reward || ''}</span></div>
     `;
     listEl.appendChild(row);
   }
@@ -534,9 +514,9 @@ function renderRewardFields(containerId, type) {
   const labels = { tier1: 'Tier 1', tier2: 'Tier 2', tier3: 'Tier 3', jackpot: 'Jackpot', bonus: 'Bonus' };
   for (const tier of tiers) {
     const row = document.createElement('div');
-    row.className = 'reward-field-row';
+    row.className = 'reward-field';
     row.innerHTML = `
-      <label class="reward-field-label">${labels[tier]}</label>
+      <label>${labels[tier]}</label>
       <input class="reward-input" type="text" data-type="${type}" data-tier="${tier}" value="${escapeHtml(state.rewards[type][tier] || '')}" />
     `;
     el.appendChild(row);
@@ -549,25 +529,22 @@ function escapeHtml(str) {
 
 function saveRewards() {
   document.querySelectorAll('.reward-input').forEach(input => {
-    const type = input.dataset.type;
-    const tier = input.dataset.tier;
-    state.rewards[type][tier] = input.value.trim();
+    state.rewards[input.dataset.type][input.dataset.tier] = input.value.trim();
   });
   saveState();
   const btn = document.getElementById('save-rewards-btn');
-  btn.textContent = 'Saved!';
+  btn.textContent = 'Saved';
   setTimeout(() => { btn.textContent = 'Save Reward Text'; }, 1500);
 }
 
-/* ─── EXPORT / IMPORT / RESET ────────────────────────────────────────────── */
+/* ─── EXPORT / IMPORT / RESET ─────────────────────────────────────────────── */
 
 function exportData() {
-  const json = JSON.stringify(state, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `habit-wheel-backup-${todayStr()}.json`;
+  a.download = `habit-wheel-${todayStr()}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -581,9 +558,9 @@ function importData(file) {
       state = { ...defaultState(), ...imported };
       saveState();
       renderScreen(currentScreen);
-      alert('Backup imported successfully.');
+      alert('Backup imported.');
     } catch (err) {
-      alert('Could not read backup file. Please check the JSON is valid.');
+      alert('Could not read backup file.');
     }
   };
   reader.readAsText(file);
@@ -593,11 +570,16 @@ function resetAll() {
   state = defaultState();
   saveState();
   bonusSpinsRemaining = 0;
+  spinType = 'practice';
+
   const area = document.getElementById('spin-result-area');
   area.innerHTML = '';
   area.classList.add('hidden');
-  const bonus = document.getElementById('bonus-result-area');
-  bonus.innerHTML = '';
+
+  const bonusArea = document.getElementById('bonus-result-area');
+  bonusArea.innerHTML = '';
+  bonusArea.style.display = 'none';
+
   renderScreen(currentScreen);
 }
 
@@ -621,25 +603,32 @@ function hideConfirm() {
 document.addEventListener('DOMContentLoaded', () => {
   checkDateReset();
 
-  // Nav
+  // Nav tabs
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => showScreen(btn.dataset.screen));
+  });
+
+  // Spin type toggle
+  document.querySelectorAll('.type-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      spinType = btn.dataset.spintype;
+      renderToday();
+    });
   });
 
   // Log practice block
   document.getElementById('log-block-btn').addEventListener('click', () => {
     state.practiceBlocks++;
-
     const color = randomColor();
     state.practiceClips[color]++;
     state.practiceClipTotal++;
-
     saveState();
-    renderToday();
 
     const btn = document.getElementById('log-block-btn');
-    btn.textContent = `+ Block ${state.practiceBlocks} logged`;
-    setTimeout(() => { btn.textContent = '+ Log 25-min Practice Block'; }, 1200);
+    btn.textContent = `Block ${state.practiceBlocks} logged`;
+    setTimeout(() => { btn.textContent = 'Log Practice Block'; }, 1200);
+
+    renderToday();
   });
 
   // Save questions
@@ -654,7 +643,6 @@ document.addEventListener('DOMContentLoaded', () => {
       state.totalQuestions += diff;
       state.weekQuestions += diff;
     }
-
     saveState();
     renderToday();
 
@@ -667,53 +655,40 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('workout-btn').addEventListener('click', () => {
     if (state.workoutDone) return;
     state.workoutDone = true;
-    const wColor = randomColor();
-    state.workoutClips[wColor]++;
+    const color = randomColor();
+    state.workoutClips[color]++;
     state.workoutClipTotal++;
     state.weekWorkouts++;
-
     saveState();
     renderToday();
   });
 
-  // Spin type change
-  document.getElementById('spin-type-select').addEventListener('change', renderToday);
-
-  // Spin wheel
+  // Spin
   document.getElementById('spin-btn').addEventListener('click', () => {
-    const type = document.getElementById('spin-type-select').value;
-    const avail = type === 'practice' ? practiceSpinsAvail() : workoutSpinsAvail();
+    const avail = spinType === 'practice' ? practiceSpinsAvail() : workoutSpinsAvail();
     if (avail <= 0) return;
 
     const btn = document.getElementById('spin-btn');
     btn.disabled = true;
-    btn.textContent = 'spinning…';
+    btn.textContent = 'Spinning...';
 
-    setTimeout(() => {
-      doSpin(type);
-    }, 600);
+    setTimeout(() => { doSpin(spinType); }, 500);
   });
 
-  // Spin bonus
+  // Bonus spin
   document.getElementById('spin-bonus-btn').addEventListener('click', () => {
     if (bonusSpinsRemaining <= 0) return;
     doBonus();
   });
 
-  // Save rewards
+  // Settings
   document.getElementById('save-rewards-btn').addEventListener('click', saveRewards);
-
-  // Export
   document.getElementById('export-btn').addEventListener('click', exportData);
-
-  // Import
   document.getElementById('import-file-input').addEventListener('change', e => {
     const file = e.target.files[0];
     if (file) importData(file);
     e.target.value = '';
   });
-
-  // Reset
   document.getElementById('reset-btn').addEventListener('click', () => {
     showConfirm('This will permanently delete all your data. Are you sure?', resetAll);
   });
@@ -728,6 +703,5 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.target === document.getElementById('confirm-overlay')) hideConfirm();
   });
 
-  // Initial render
   showScreen('today');
 });

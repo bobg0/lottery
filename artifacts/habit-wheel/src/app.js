@@ -540,84 +540,170 @@ function deleteBankedReward(id) {
 
 function showDeficitDetail() {
   const body = document.getElementById('deficit-body');
-  const expected = expectedQuestions();
-  const total = state.totalQuestions;
-  const cd = total - expected;
-  const remaining = Math.max(0, 400 - total);
-  const dn = dayNumber();
-  const daysLeft = Math.max(0, 40 - dn);
-  const needed = daysLeft > 0 ? (remaining / daysLeft).toFixed(1) : '—';
 
-  // Stats grid
-  const cdClass = cd < 0 ? 'neg' : cd > 0 ? 'pos' : '';
-  body.innerHTML = `
-    <div class="deficit-stats-grid">
-      <div class="dstat-box">
-        <div class="dstat-val">${total}</div>
-        <div class="dstat-label">Completed</div>
-      </div>
-      <div class="dstat-box">
-        <div class="dstat-val">${expected}</div>
-        <div class="dstat-label">Expected by today</div>
-      </div>
-      <div class="dstat-box">
-        <div class="dstat-val ${cdClass}">${cd >= 0 ? '+' : ''}${cd}</div>
-        <div class="dstat-label">Cumulative delta</div>
-      </div>
-      <div class="dstat-box">
-        <div class="dstat-val">${remaining}</div>
-        <div class="dstat-label">Remaining</div>
-      </div>
-      <div class="dstat-box">
-        <div class="dstat-val">${daysLeft}</div>
-        <div class="dstat-label">Days left</div>
-      </div>
-      <div class="dstat-box">
-        <div class="dstat-val">${needed}</div>
-        <div class="dstat-label">Needed / day</div>
+  const dn           = dayNumber();
+  const total        = state.totalQuestions;
+  const expected     = expectedQuestions();
+  const cd           = total - expected;
+  const remaining    = Math.max(0, 400 - total);
+  const daysFromTmrw = Math.max(0, 40 - dn);         // days after today
+  const daysInclToday = Math.max(1, 40 - dn + 1);    // days including today
+  const reqFromTmrw  = daysFromTmrw > 0 ? remaining / daysFromTmrw : null;
+  const cdClass      = cd < 0 ? 'neg' : cd > 0 ? 'pos' : '';
+  const cdStr        = (cd > 0 ? '+' : '') + cd;
+  const needStr      = reqFromTmrw !== null ? reqFromTmrw.toFixed(1) : '—';
+
+  // ── Rolling-average helper
+  function rollingAvg(n) {
+    const days = state.dailyHistory.slice(-n);
+    if (!days.length) return null;
+    return days.reduce((a, d) => a + d.questions, 0) / days.length;
+  }
+  const avg3 = rollingAvg(3);
+  const avg7 = rollingAvg(7);
+
+  function paceLabel(avg) {
+    if (avg === null) return '';
+    if (avg >= 10)  return 'On pace';
+    if (avg >=  8)  return 'Slightly behind';
+    return 'Behind pace';
+  }
+
+  // ── 1. Summary cards
+  let html = `
+    <div class="dc-section">
+      <div class="dc-label">Summary</div>
+      <div class="dc-grid">
+        <div class="dc-card">
+          <div class="dc-card-val">${total}</div>
+          <div class="dc-card-key">Completed</div>
+        </div>
+        <div class="dc-card">
+          <div class="dc-card-val">${expected}</div>
+          <div class="dc-card-key">Expected by today</div>
+        </div>
+        <div class="dc-card">
+          <div class="dc-card-val ${cdClass}">${cdStr}</div>
+          <div class="dc-card-key">Net delta</div>
+        </div>
+        <div class="dc-card">
+          <div class="dc-card-val">${remaining}</div>
+          <div class="dc-card-key">Remaining</div>
+        </div>
+        <div class="dc-card">
+          <div class="dc-card-val">${daysFromTmrw}</div>
+          <div class="dc-card-key">Days left</div>
+        </div>
+        <div class="dc-card">
+          <div class="dc-card-val">${needStr}</div>
+          <div class="dc-card-key">Needed / day</div>
+        </div>
       </div>
     </div>
   `;
 
-  // Build chart from dailyHistory + today
+  // ── 2. Rolling pace
+  const last3Counts = state.dailyHistory.slice(-3).map(d => d.questions).join(', ');
+  html += `
+    <div class="dc-section">
+      <div class="dc-label">Rolling pace</div>
+      <div class="dc-pace-row">
+        <div class="dc-pace-left">
+          <div>Last 3 days</div>
+          ${avg3 !== null && last3Counts ? `<div class="dc-pace-sub">${last3Counts} questions</div>` : ''}
+        </div>
+        <div class="dc-pace-val">${avg3 !== null ? avg3.toFixed(1) + '/day' : '—'}</div>
+      </div>
+      <div class="dc-pace-row">
+        <div class="dc-pace-left">
+          <div>Last 7 days</div>
+          ${avg7 !== null ? `<div class="dc-pace-sub">${paceLabel(avg7)}</div>` : ''}
+        </div>
+        <div class="dc-pace-val">${avg7 !== null ? avg7.toFixed(1) + '/day' : '—'}</div>
+      </div>
+      <div class="dc-pace-row">
+        <div class="dc-pace-left">Today so far</div>
+        <div class="dc-pace-val">${state.questionsToday} questions</div>
+      </div>
+    </div>
+  `;
+
+  // ── 3. Recommendation
+  let recHtml = '';
+  if (remaining === 0) {
+    recHtml = `<div class="dc-rec good">You've completed all 400 questions. Goal achieved!</div>`;
+  } else if (daysFromTmrw === 0) {
+    recHtml = `<div class="dc-rec">Last day — ${remaining} question${remaining !== 1 ? 's' : ''} left to reach 400.</div>`;
+  } else if (cd >= 0) {
+    const minPossible = (remaining / daysInclToday).toFixed(1);
+    recHtml = `
+      <div class="dc-rec good">
+        You're ahead by <strong>${cd} question${cd !== 1 ? 's' : ''}</strong>.
+        You could do as few as <strong>${minPossible}/day</strong> (including today) and still finish on time.
+      </div>
+    `;
+  } else {
+    if (reqFromTmrw !== null && reqFromTmrw > 16) {
+      recHtml = `
+        <div class="dc-rec warn">
+          To finish on time you'd need <strong>${needStr} questions/day</strong> from tomorrow — that pace is high.
+          Consider adding a catch-up day or extending your deadline by a few days.
+        </div>
+      `;
+    } else {
+      recHtml = `
+        <div class="dc-rec">
+          To finish on time, average <strong>${needStr} questions/day</strong> from tomorrow onward.
+        </div>
+      `;
+    }
+  }
+  html += `
+    <div class="dc-section">
+      <div class="dc-label">Recommendation</div>
+      ${recHtml}
+    </div>
+  `;
+
+  // ── 4. Daily chart (last 20 days including today)
   const allDays = [
     ...state.dailyHistory,
     { date: todayStr(), questions: state.questionsToday },
-  ].slice(-20); // last 20 days
+  ].slice(-20);
 
-  if (allDays.length === 0) {
-    body.innerHTML += `<p class="chart-empty">No history yet. Come back after a few days.</p>`;
+  html += `<div class="dc-section"><div class="dc-label">Daily delta — goal 10/day</div>`;
+
+  if (!allDays.length) {
+    html += `<p class="dc-chart-empty">No data yet. Check back after logging a few days.</p>`;
   } else {
     const deltas = allDays.map(d => ({ date: d.date, delta: d.questions - 10 }));
     const maxAbs = Math.max(1, ...deltas.map(d => Math.abs(d.delta)));
 
-    let chartHtml = `<div class="chart-section-label">Daily question delta (goal: 10/day)</div>`;
     for (const { date, delta } of deltas) {
-      const pct = Math.min(48, (Math.abs(delta) / maxAbs) * 48);
-      const valClass = delta < 0 ? 'neg' : delta > 0 ? 'pos' : 'zero';
-      const valStr = delta === 0 ? '0' : delta > 0 ? `+${delta}` : `${delta}`;
+      const pct     = Math.min(48, (Math.abs(delta) / maxAbs) * 48);
+      const vcls    = delta > 0 ? 'pos' : delta < 0 ? 'neg' : 'zero';
+      const valStr  = delta > 0 ? `+${delta}` : `${delta}`;
+      const barHtml = delta > 0
+        ? `<div class="dc-chart-bar dc-chart-pos" style="width:${pct}%"></div>`
+        : delta < 0
+          ? `<div class="dc-chart-bar dc-chart-neg" style="width:${pct}%"></div>`
+          : '';
 
-      let barHtml = '';
-      if (delta > 0) {
-        barHtml = `<div class="chart-bar chart-bar-pos" style="width:${pct}%"></div>`;
-      } else if (delta < 0) {
-        barHtml = `<div class="chart-bar chart-bar-neg" style="width:${pct}%"></div>`;
-      }
-
-      chartHtml += `
-        <div class="chart-row">
-          <span class="chart-date">${fmtDate(date)}</span>
-          <div class="chart-axis-wrap">
-            <div class="chart-center"></div>
+      html += `
+        <div class="dc-chart-row">
+          <span class="dc-chart-date">${fmtDate(date)}</span>
+          <div class="dc-chart-wrap">
+            <div class="dc-chart-axis"></div>
             ${barHtml}
           </div>
-          <span class="chart-val ${valClass}">${valStr}</span>
+          <span class="dc-chart-val ${vcls}">${valStr}</span>
         </div>
       `;
     }
-    body.innerHTML += chartHtml;
   }
 
+  html += `</div>`;
+  body.innerHTML = html;
   document.getElementById('deficit-overlay').classList.remove('hidden');
 }
 

@@ -1,8 +1,6 @@
-const CACHE_NAME = 'habit-wheel-v1';
+const CACHE_NAME = 'habit-wheel-v2';
 const ASSETS = [
   '/',
-  '/src/style.css',
-  '/src/app.js',
   '/manifest.json'
 ];
 

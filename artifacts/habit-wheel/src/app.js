@@ -1,58 +1,28 @@
-/* ─── Habit Wheel ─────────────────────────────────────────────────────────── */
+/* ═══ Habit Wheel v2 ══════════════════════════════════════════════════════ */
 
-const CLIP_COLORS = ['red', 'blue', 'green', 'yellow', 'purple', 'orange'];
-const GOLD = 'gold';
-const ALL_COLORS = [...CLIP_COLORS, GOLD];
+const DAILY_Q_GOAL   = 10;
+const TOTAL_Q_GOAL   = 400;
+const CHALLENGE_DAYS = 40;
+const WO_WEEK_GOAL   = 8;
+const STORAGE_KEY    = 'habit_wheel_v2';
 
-const DEFAULT_REWARDS = {
-  practice: {
-    tier1:   '5–8 min video game or 10 min movie',
-    tier2:   '15–20 min video game or 20–25 min movie',
-    tier3:   '35–45 min video game or movie segment',
-    jackpot: '90 min game/movie block',
-    bonus:   'Bonus challenge — see result',
-  },
-  workout: {
-    tier1:   '10 min video game or 15 min movie',
-    tier2:   '30 min video game or half movie',
-    tier3:   '60 min video game or full movie if evening',
-    jackpot: '2 hour game/movie block',
-    bonus:   'Bonus challenge — see result',
-  },
-};
-
-const PRACTICE_BONUS_OPTIONS = [
-  'Do 2 more practice questions.',
-  'Do 1 more question + review a previous one.',
-  'Review one missed question and write the key idea.',
-  'Gain 1 free clip (random color).',
-  'Spin the bonus wheel twice!',
-];
-
-const WORKOUT_BONUS_OPTIONS = [
-  '12 extra minutes of accessory work.',
-  '8 extra minutes of accessory work.',
-  '5 extra minutes of accessory work.',
-  'Gain 1 free clip (random color).',
-  'Spin the bonus wheel twice!',
-];
-
-/* ─── Helpers ─────────────────────────────────────────────────────────────── */
+/* ═══ Helpers ════════════════════════════════════════════════════════════ */
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
 function weekStartStr() {
-  const d = new Date();
+  const d   = new Date();
   const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const monday = new Date(new Date().setDate(diff));
-  return monday.toISOString().slice(0, 10);
+  const diff = day === 0 ? -6 : 1 - day;
+  const mon  = new Date(d);
+  mon.setDate(d.getDate() + diff);
+  return mon.toISOString().slice(0, 10);
 }
 
-function randomColor() {
-  return CLIP_COLORS[Math.floor(Math.random() * CLIP_COLORS.length)];
+function daysBetween(aStr, bStr) {
+  return Math.floor((new Date(bStr) - new Date(aStr)) / 86400000);
 }
 
 function fmtDate(dateStr) {
@@ -63,85 +33,112 @@ function fmtDate(dateStr) {
 
 function fmtDateLong(dateStr) {
   if (!dateStr) return '';
-  const [y, m, d] = dateStr.split('-');
-  return `${m}/${d}/${y}`;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const [, m, d] = dateStr.split('-');
+  return `${months[parseInt(m) - 1]} ${parseInt(d)}`;
 }
 
-function totalClips(clips) {
-  return Object.values(clips).reduce((a, b) => a + b, 0);
+function fmtTime(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  let h = d.getHours(), mn = d.getMinutes();
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${String(mn).padStart(2, '0')} ${ap}`;
 }
 
-function daysBetween(a, b) {
-  const da = new Date(a);
-  const db = new Date(b);
-  return Math.floor((db - da) / 86400000);
+function fmtTimestamp() {
+  const now = new Date();
+  const H = String(now.getHours()).padStart(2, '0');
+  const M = String(now.getMinutes()).padStart(2, '0');
+  return `${todayStr()}-${H}${M}`;
 }
 
-function extractMinutes(text) {
-  const range = text.match(/(\d+)\s*[–\-]\s*(\d+)\s*min/i);
-  if (range) return `${range[1]}–${range[2]} min`;
-  const single = text.match(/(\d+)\s*min/i);
-  if (single) return `${single[1]} min`;
-  const hours = text.match(/(\d+)\s*hour/i);
-  if (hours) return `${parseInt(hours[1]) * 60} min`;
-  return '';
+function getDatesInWeek(weekStart) {
+  const dates = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + i);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
 }
 
-/* ─── State ───────────────────────────────────────────────────────────────── */
+function getDatesRange(startStr, endStr) {
+  const dates = [];
+  const end = new Date(endStr);
+  const d   = new Date(startStr);
+  while (d <= end) {
+    dates.push(d.toISOString().slice(0, 10));
+    d.setDate(d.getDate() + 1);
+  }
+  return dates;
+}
 
-const STORAGE_KEY = 'habit_wheel_state';
+function esc(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/* ═══ Default state ══════════════════════════════════════════════════════ */
 
 function defaultState() {
   return {
-    startDate:  todayStr(),
-    lastDate:   todayStr(),
-    weekStart:  weekStartStr(),
+    startDate: todayStr(),
+    lastDate:  todayStr(),
+    weekStart: weekStartStr(),
 
-    practiceBlocks: 0,
-    questionsToday: 0,
-    workoutDone:    false,
+    sharedTokens: 0,
 
-    practiceClips:     Object.fromEntries(ALL_COLORS.map(c => [c, 0])),
-    workoutClips:      Object.fromEntries(ALL_COLORS.map(c => [c, 0])),
-    practiceClipTotal: 0,
-    practiceSpinsUsed: 0,
-    workoutClipTotal:  0,
-    workoutSpinsUsed:  0,
+    practiceByDate:  {},   // { 'YYYY-MM-DD': blockCount }
+    workoutByDate:   {},   // { 'YYYY-MM-DD': blockCount }
+    questionsByDate: {},   // { 'YYYY-MM-DD': count }
 
-    totalQuestions: 0,
-    weekQuestions:  0,
-    practiceDays:   0,
-    weekWorkouts:   0,
+    totalPracticeBlocks: 0,
+    totalWorkoutBlocks:  0,
+    totalQuestions:      0,
 
-    dailyHistory: [],   // [{date, questions}] finalized per-day
-    history:      [],   // spin / cash-in / claimed log
-    bankedRewards: [],  // [{id, reward, type, tier, date}]
-    bankedNextId:   1,
+    rewardBlocks:     [],  // [{ id, earnedAt, tier }]  — 30 min each
+    spentHistory:     [],  // [{ id, blocksSpent, minutesSpent, spentAt }]
+    discardedHistory: [],  // [{ id, tier, rewardText, discardedAt }]
 
-    rewards: JSON.parse(JSON.stringify(DEFAULT_REWARDS)),
+    nextId: 1,
+
+    settings: {
+      spinCost:               3,
+      weeklyRewardCapMinutes: 600,
+      rewards: {
+        tier1:   { text: '30-minute reward block',  blocks: 1 },
+        tier2:   { text: '60-minute reward block',  blocks: 2 },
+        tier3:   { text: '90-minute reward block',  blocks: 3 },
+        jackpot: { text: '120-minute reward block', blocks: 4 },
+        bonus:   { text: 'Bonus challenge',         blocks: 0 },
+      },
+    },
   };
 }
+
+/* ═══ State persistence ══════════════════════════════════════════════════ */
 
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState();
-    const s = JSON.parse(raw);
+    const s   = JSON.parse(raw);
     const def = defaultState();
     for (const k of Object.keys(def)) {
       if (s[k] === undefined) s[k] = def[k];
     }
-    for (const c of ALL_COLORS) {
-      if (s.practiceClips[c] === undefined) s.practiceClips[c] = 0;
-      if (s.workoutClips[c]  === undefined) s.workoutClips[c]  = 0;
-    }
-    for (const type of ['practice', 'workout']) {
-      for (const tier of ['tier1', 'tier2', 'tier3', 'jackpot', 'bonus']) {
-        if (!s.rewards[type][tier]) s.rewards[type][tier] = def.rewards[type][tier];
-      }
+    if (!s.settings)         s.settings         = def.settings;
+    if (!s.settings.rewards) s.settings.rewards = def.settings.rewards;
+    for (const t of ['tier1','tier2','tier3','jackpot','bonus']) {
+      if (!s.settings.rewards[t]) s.settings.rewards[t] = def.settings.rewards[t];
     }
     return s;
-  } catch (e) {
+  } catch {
     return defaultState();
   }
 }
@@ -152,133 +149,64 @@ function saveState() {
 
 let state = loadState();
 
-/* ─── Undo Stack ──────────────────────────────────────────────────────────── */
+/* ═══ Computed values ════════════════════════════════════════════════════ */
 
-let undoStack = []; // [{label, state}]
-const MAX_UNDO = 10;
+const getQToday        = ()  => state.questionsByDate[todayStr()] || 0;
+const getPracToday     = ()  => state.practiceByDate[todayStr()]  || 0;
+const getWorkToday     = ()  => state.workoutByDate[todayStr()]   || 0;
+const getSpinsAvail    = ()  => Math.floor(state.sharedTokens / state.settings.spinCost);
 
-function pushUndo(label) {
-  undoStack.push({ label, state: JSON.parse(JSON.stringify(state)) });
-  if (undoStack.length > MAX_UNDO) undoStack.shift();
-  renderUndoBtn();
-}
-
-function undoLast() {
-  if (!undoStack.length) return;
-  const entry = undoStack.pop();
-  state = entry.state;
-  saveState();
-
-  // Reset transient spin state
-  currentSpinResult = null;
-  bonusSpinsRemaining = 0;
-
-  const ra = document.getElementById('spin-result-area');
-  if (ra) { ra.innerHTML = ''; ra.classList.add('hidden'); }
-  const sa = document.getElementById('spin-actions');
-  if (sa) sa.classList.add('hidden');
-  const bs = document.getElementById('bonus-section');
-  if (bs) { bs.classList.add('hidden'); bs.style.display = 'none'; }
-  const bra = document.getElementById('bonus-result-area');
-  if (bra) { bra.innerHTML = ''; bra.classList.add('hidden'); }
-
-  renderScreen(currentScreen);
-  renderUndoBtn();
-}
-
-function renderUndoBtn() {
-  const btn = document.getElementById('undo-btn');
-  if (!btn) return;
-  if (undoStack.length) {
-    btn.textContent = `Undo: ${undoStack[undoStack.length - 1].label}`;
-    btn.disabled = false;
-  } else {
-    btn.textContent = 'Nothing to undo';
-    btn.disabled = true;
-  }
-}
-
-/* ─── Daily / Weekly Reset ────────────────────────────────────────────────── */
-
-function checkDateReset() {
-  const today = todayStr();
-  const ws    = weekStartStr();
-
-  if (state.lastDate !== today) {
-    // Archive yesterday's question count
-    state.dailyHistory.push({ date: state.lastDate, questions: state.questionsToday });
-    if (state.dailyHistory.length > 60) state.dailyHistory.shift();
-
-    if (state.practiceBlocks > 0) state.practiceDays++;
-    state.practiceBlocks = 0;
-    state.questionsToday = 0;
-    state.workoutDone    = false;
-    state.lastDate       = today;
-  }
-
-  if (state.weekStart !== ws) {
-    state.weekQuestions = 0;
-    state.weekWorkouts  = 0;
-    state.weekStart     = ws;
-  }
-
-  saveState();
-}
-
-/* ─── Computed Values ─────────────────────────────────────────────────────── */
-
-function practiceSpinsAvail() {
-  return Math.max(0, Math.floor(state.practiceClipTotal / 2) - state.practiceSpinsUsed);
-}
-
-function workoutSpinsAvail() {
-  return Math.max(0, state.workoutClipTotal - state.workoutSpinsUsed);
-}
-
-// How many days (including today) since the start date
 function dayNumber() {
   return daysBetween(state.startDate, todayStr()) + 1;
 }
 
 function expectedQuestions() {
-  return Math.min(dayNumber() * 10, 400);
+  return Math.min(dayNumber() * DAILY_Q_GOAL, TOTAL_Q_GOAL);
 }
 
-function cumulativeDelta() {
-  return state.totalQuestions - expectedQuestions();
+function getWeekWorkBlocks() {
+  return getDatesInWeek(state.weekStart)
+    .reduce((s, d) => s + (state.workoutByDate[d] || 0), 0);
 }
 
-function dailyDelta() {
-  return state.questionsToday - 10;
+function rollingAvg(n) {
+  const yd  = new Date();
+  yd.setDate(yd.getDate() - 1);
+  const ydStr = yd.toISOString().slice(0, 10);
+  if (ydStr < state.startDate) return null;
+  const all   = getDatesRange(state.startDate, ydStr);
+  const lastN = all.slice(-n);
+  if (!lastN.length) return null;
+  return lastN.reduce((s, d) => s + (state.questionsByDate[d] || 0), 0) / lastN.length;
 }
 
-/* ─── Spin Logic ──────────────────────────────────────────────────────────── */
-
-function spinWheel() {
-  const r = Math.random();
-  if (r < 0.40) return 'tier1';
-  if (r < 0.70) return 'tier2';
-  if (r < 0.90) return 'tier3';
-  if (r < 0.98) return 'bonus';
-  return 'jackpot';
+function spentTodayMin() {
+  const t = todayStr();
+  return state.spentHistory
+    .filter(e => e.spentAt.startsWith(t))
+    .reduce((s, e) => s + e.minutesSpent, 0);
 }
 
-function spinBonus(type) {
-  const opts = type === 'practice' ? PRACTICE_BONUS_OPTIONS : WORKOUT_BONUS_OPTIONS;
-  return opts[Math.floor(Math.random() * opts.length)];
+function spentWeekMin() {
+  const dates = getDatesInWeek(state.weekStart);
+  return state.spentHistory
+    .filter(e => dates.includes(e.spentAt.slice(0, 10)))
+    .reduce((s, e) => s + e.minutesSpent, 0);
 }
 
-function tierLabel(tier) {
-  return { tier1: 'Tier 1', tier2: 'Tier 2', tier3: 'Tier 3', jackpot: 'Jackpot', bonus: 'Bonus' }[tier] || tier;
+/* ═══ Date reset ═════════════════════════════════════════════════════════ */
+
+function checkDateReset() {
+  const today = todayStr();
+  const ws    = weekStartStr();
+  if (state.lastDate !== today) state.lastDate = today;
+  if (state.weekStart !== ws)   state.weekStart = ws;
+  saveState();
 }
 
-/* ─── Screens ─────────────────────────────────────────────────────────────── */
+/* ═══ Screen navigation ══════════════════════════════════════════════════ */
 
 let currentScreen = 'today';
-let spinType = 'practice';
-let bonusSpinType = 'practice';
-let bonusSpinsRemaining = 0;
-let currentSpinResult = null; // {tier, reward, type} — pending bank/claim
 
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => {
@@ -287,8 +215,8 @@ function showScreen(name) {
   });
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
 
-  const screen = document.getElementById(`screen-${name}`);
-  if (screen) { screen.classList.add('active'); screen.style.display = ''; }
+  const scr = document.getElementById(`screen-${name}`);
+  if (scr) { scr.classList.add('active'); scr.style.display = ''; }
 
   const btn = document.querySelector(`.nav-btn[data-screen="${name}"]`);
   if (btn) btn.classList.add('active');
@@ -299,823 +227,770 @@ function showScreen(name) {
 
 function renderScreen(name) {
   if (name === 'today')     renderToday();
-  if (name === 'inventory') renderInventory();
   if (name === 'progress')  renderProgress();
+  if (name === 'rewards')   renderRewards();
+  if (name === 'inventory') renderInventory();
   if (name === 'settings')  renderSettings();
 }
 
-/* ─── TODAY ───────────────────────────────────────────────────────────────── */
+/* ═══ TODAY ══════════════════════════════════════════════════════════════ */
 
 function renderToday() {
-  // Header date
   const d = new Date();
   document.getElementById('today-date').textContent =
-    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
-  // Practice block stat
-  const b = state.practiceBlocks;
-  document.getElementById('block-stat-line').textContent =
-    `${b} block${b !== 1 ? 's' : ''} today · ${b} clip${b !== 1 ? 's' : ''} earned`;
+  document.getElementById('practice-blocks-today').textContent = getPracToday();
+  document.getElementById('q-today').textContent               = getQToday();
+  document.getElementById('workout-week').textContent          = getWeekWorkBlocks();
 
-  // Questions count
-  document.getElementById('q-count').textContent = state.questionsToday;
-  const badge = document.getElementById('q-goal-badge');
-  if (state.questionsToday >= 10) {
-    badge.textContent = 'Done';
-    badge.classList.add('done');
-  } else {
-    badge.textContent = `${state.questionsToday}/10`;
-    badge.classList.remove('done');
-  }
+  // Status pill
+  const dd   = getQToday() - DAILY_Q_GOAL;
+  const pill = document.getElementById('practice-status-pill');
+  pill.className = 'status-pill';
+  if (dd > 0)      { pill.textContent = `Surplus +${dd}`;  pill.classList.add('pill-surplus'); }
+  else if (dd < 0) { pill.textContent = `Deficit ${dd}`;   pill.classList.add('pill-deficit'); }
+  else             { pill.textContent = 'On pace';          pill.classList.add('pill-pace');    }
 
-  // Deficit / surplus
-  const dd = dailyDelta();
-  const cd = cumulativeDelta();
-  const dailyBtn = document.getElementById('daily-delta-btn');
-  dailyBtn.className = 'deficit-btn';
-  if (dd < 0) {
-    dailyBtn.textContent = `Deficit: ${dd} today`;
-    dailyBtn.classList.add('neg');
-  } else if (dd > 0) {
-    dailyBtn.textContent = `Surplus: +${dd} today`;
-    dailyBtn.classList.add('pos');
-  } else {
-    dailyBtn.textContent = 'On pace today';
-  }
+  // Spin card
+  const avail = getSpinsAvail();
+  document.getElementById('tokens-display').textContent    = state.sharedTokens;
+  document.getElementById('spins-display').textContent     = avail;
+  document.getElementById('spin-cost-display').textContent = state.settings.spinCost;
 
-  const overallEl = document.getElementById('overall-delta-label');
-  overallEl.className = 'overall-label';
-  if (cd < 0) {
-    overallEl.textContent = `Overall: ${cd} behind`;
-    overallEl.classList.add('neg');
-  } else if (cd > 0) {
-    overallEl.textContent = `Overall: +${cd} ahead`;
-    overallEl.classList.add('pos');
-  } else {
-    overallEl.textContent = 'Overall: on pace';
-  }
-
-  // Workout button
-  const wBtn = document.getElementById('workout-btn');
-  const wLine = document.getElementById('workout-stat-line');
-  if (state.workoutDone) {
-    wBtn.textContent = 'Workout Done';
-    wBtn.disabled = true;
-    wLine.classList.remove('hidden');
-  } else {
-    wBtn.textContent = 'Mark Workout Done';
-    wBtn.disabled = false;
-    wLine.classList.add('hidden');
-  }
-
-  // Spins
-  const pAvail = practiceSpinsAvail();
-  const wAvail = workoutSpinsAvail();
-  const total = pAvail + wAvail;
-  document.getElementById('spins-avail-label').textContent =
-    total === 1 ? '1 available' : `${total} available`;
-
-  // Spin toggle
-  document.querySelectorAll('.type-toggle-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.spintype === spinType);
-  });
-
-  // Spin button
   const spinBtn = document.getElementById('spin-btn');
-  const currentAvail = spinType === 'practice' ? pAvail : wAvail;
-  if (spinType === 'practice' && pAvail > 0 && state.practiceBlocks < 3) {
-    spinBtn.disabled = true;
-    spinBtn.textContent = 'Need 3 blocks first';
-  } else if (currentAvail === 0) {
-    spinBtn.disabled = true;
-    spinBtn.textContent = 'No spins available';
-  } else {
-    spinBtn.disabled = false;
-    spinBtn.textContent = 'Spin';
-  }
-
-  // Bonus section
-  updateBonusSection();
-
-  // Undo btn
-  renderUndoBtn();
+  spinBtn.disabled    = avail === 0;
+  spinBtn.textContent = avail === 0 ? 'No spins available' : 'Spin';
 }
 
-function updateBonusSection() {
-  const section = document.getElementById('bonus-section');
-  if (bonusSpinsRemaining > 0) {
-    section.classList.remove('hidden');
-    section.style.display = '';
-    const btn = document.getElementById('spin-bonus-btn');
-    btn.textContent = bonusSpinsRemaining > 1
-      ? `Spin Bonus Wheel (${bonusSpinsRemaining} left)`
-      : 'Spin Bonus Wheel';
-  } else {
-    section.classList.add('hidden');
-    section.style.display = 'none';
-  }
-}
-
-function doSpin(type) {
-  pushUndo('spin');
-
-  const tier = spinWheel();
-  const reward = state.rewards[type][tier] || '';
-
-  if (type === 'practice') state.practiceSpinsUsed++;
-  else state.workoutSpinsUsed++;
-
-  saveState();
-
-  currentSpinResult = { tier, reward, type };
-
-  const area = document.getElementById('spin-result-area');
-  area.classList.remove('hidden');
-
-  if (tier === 'bonus') {
-    area.innerHTML = `<div class="result-tier">Bonus</div><div class="result-text">Spin the bonus wheel to reveal your challenge.</div>`;
-    bonusSpinType = type;
-    bonusSpinsRemaining = 1;
-
-    const bonusArea = document.getElementById('bonus-result-area');
-    bonusArea.innerHTML = '';
-    bonusArea.classList.add('hidden');
-  } else {
-    area.innerHTML = `<div class="result-tier">${tierLabel(tier)}</div><div class="result-text">${reward}</div>`;
-    bonusSpinsRemaining = 0;
-  }
-
-  // Show bank/claim buttons
-  const spinActions = document.getElementById('spin-actions');
-  spinActions.classList.remove('hidden');
-
-  renderToday();
-}
-
-function doBonus() {
-  if (bonusSpinsRemaining <= 0) return;
-
-  const result = spinBonus(bonusSpinType);
-  const bonusArea = document.getElementById('bonus-result-area');
-  bonusArea.classList.remove('hidden');
-  bonusArea.innerHTML = `<div class="result-tier">Bonus Result</div><div class="result-text">${result}</div>`;
-
-  const isDouble = result.toLowerCase().includes('twice');
-  bonusSpinsRemaining--;
-  if (isDouble) bonusSpinsRemaining += 2;
-
-  if (result.toLowerCase().includes('free clip')) {
-    const c = randomColor();
-    state.practiceClips[c]++;
-    state.practiceClipTotal++;
-    saveState();
-  }
-
-  renderToday();
-}
-
-function bankReward() {
-  if (!currentSpinResult) return;
-  pushUndo('bank reward');
-
-  const { tier, reward, type } = currentSpinResult;
-  state.bankedRewards.push({
-    id:     state.bankedNextId++,
-    reward,
-    type,
-    tier,
-    date:   todayStr(),
-  });
-  saveState();
-
-  currentSpinResult = null;
-  clearSpinResult();
-  renderToday();
-}
-
-function claimSpinNow() {
-  if (!currentSpinResult) return;
-  pushUndo('claim reward');
-
-  const { tier, reward, type } = currentSpinResult;
-  state.history.unshift({ date: todayStr(), type, tier, reward, claimed: true });
-  if (state.history.length > 80) state.history = state.history.slice(0, 80);
-  saveState();
-
-  currentSpinResult = null;
-  clearSpinResult();
-  renderToday();
-}
-
-function clearSpinResult() {
-  const area = document.getElementById('spin-result-area');
-  if (area) { area.innerHTML = ''; area.classList.add('hidden'); }
-  const actions = document.getElementById('spin-actions');
-  if (actions) actions.classList.add('hidden');
-  bonusSpinsRemaining = 0;
-  updateBonusSection();
-}
-
-function claimBankedReward(id) {
-  pushUndo('claim banked reward');
-
-  const idx = state.bankedRewards.findIndex(r => r.id === id);
-  if (idx === -1) return;
-  const r = state.bankedRewards.splice(idx, 1)[0];
-
-  state.history.unshift({ date: todayStr(), type: `${r.type} (banked)`, tier: r.tier, reward: r.reward, claimed: true });
-  if (state.history.length > 80) state.history = state.history.slice(0, 80);
-  saveState();
-  renderInventory();
-}
-
-function deleteBankedReward(id) {
-  pushUndo('delete banked reward');
-  state.bankedRewards = state.bankedRewards.filter(r => r.id !== id);
-  saveState();
-  renderInventory();
-}
-
-/* ─── DEFICIT DETAIL ──────────────────────────────────────────────────────── */
-
-function showDeficitDetail() {
-  const body = document.getElementById('deficit-body');
-
-  const dn           = dayNumber();
-  const total        = state.totalQuestions;
-  const expected     = expectedQuestions();
-  const cd           = total - expected;
-  const remaining    = Math.max(0, 400 - total);
-  const daysFromTmrw = Math.max(0, 40 - dn);         // days after today
-  const daysInclToday = Math.max(1, 40 - dn + 1);    // days including today
-  const reqFromTmrw  = daysFromTmrw > 0 ? remaining / daysFromTmrw : null;
-  const cdClass      = cd < 0 ? 'neg' : cd > 0 ? 'pos' : '';
-  const cdStr        = (cd > 0 ? '+' : '') + cd;
-  const needStr      = reqFromTmrw !== null ? reqFromTmrw.toFixed(1) : '—';
-
-  // ── Rolling-average helper
-  function rollingAvg(n) {
-    const days = state.dailyHistory.slice(-n);
-    if (!days.length) return null;
-    return days.reduce((a, d) => a + d.questions, 0) / days.length;
-  }
-  const avg3 = rollingAvg(3);
-  const avg7 = rollingAvg(7);
-
-  function paceLabel(avg) {
-    if (avg === null) return '';
-    if (avg >= 10)  return 'On pace';
-    if (avg >=  8)  return 'Slightly behind';
-    return 'Behind pace';
-  }
-
-  // ── 1. Summary cards
-  let html = `
-    <div class="dc-section">
-      <div class="dc-label">Summary</div>
-      <div class="dc-grid">
-        <div class="dc-card">
-          <div class="dc-card-val">${total}</div>
-          <div class="dc-card-key">Completed</div>
-        </div>
-        <div class="dc-card">
-          <div class="dc-card-val">${expected}</div>
-          <div class="dc-card-key">Expected by today</div>
-        </div>
-        <div class="dc-card">
-          <div class="dc-card-val ${cdClass}">${cdStr}</div>
-          <div class="dc-card-key">Net delta</div>
-        </div>
-        <div class="dc-card">
-          <div class="dc-card-val">${remaining}</div>
-          <div class="dc-card-key">Remaining</div>
-        </div>
-        <div class="dc-card">
-          <div class="dc-card-val">${daysFromTmrw}</div>
-          <div class="dc-card-key">Days left</div>
-        </div>
-        <div class="dc-card">
-          <div class="dc-card-val">${needStr}</div>
-          <div class="dc-card-key">Needed / day</div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  // ── 2. Rolling pace
-  const last3Counts = state.dailyHistory.slice(-3).map(d => d.questions).join(', ');
-  html += `
-    <div class="dc-section">
-      <div class="dc-label">Rolling pace</div>
-      <div class="dc-pace-row">
-        <div class="dc-pace-left">
-          <div>Last 3 days</div>
-          ${avg3 !== null && last3Counts ? `<div class="dc-pace-sub">${last3Counts} questions</div>` : ''}
-        </div>
-        <div class="dc-pace-val">${avg3 !== null ? avg3.toFixed(1) + '/day' : '—'}</div>
-      </div>
-      <div class="dc-pace-row">
-        <div class="dc-pace-left">
-          <div>Last 7 days</div>
-          ${avg7 !== null ? `<div class="dc-pace-sub">${paceLabel(avg7)}</div>` : ''}
-        </div>
-        <div class="dc-pace-val">${avg7 !== null ? avg7.toFixed(1) + '/day' : '—'}</div>
-      </div>
-      <div class="dc-pace-row">
-        <div class="dc-pace-left">Today so far</div>
-        <div class="dc-pace-val">${state.questionsToday} questions</div>
-      </div>
-    </div>
-  `;
-
-  // ── 3. Recommendation
-  let recHtml = '';
-  if (remaining === 0) {
-    recHtml = `<div class="dc-rec good">You've completed all 400 questions. Goal achieved!</div>`;
-  } else if (daysFromTmrw === 0) {
-    recHtml = `<div class="dc-rec">Last day — ${remaining} question${remaining !== 1 ? 's' : ''} left to reach 400.</div>`;
-  } else if (cd >= 0) {
-    const minPossible = (remaining / daysInclToday).toFixed(1);
-    recHtml = `
-      <div class="dc-rec good">
-        You're ahead by <strong>${cd} question${cd !== 1 ? 's' : ''}</strong>.
-        You could do as few as <strong>${minPossible}/day</strong> (including today) and still finish on time.
-      </div>
-    `;
-  } else {
-    if (reqFromTmrw !== null && reqFromTmrw > 16) {
-      recHtml = `
-        <div class="dc-rec warn">
-          To finish on time you'd need <strong>${needStr} questions/day</strong> from tomorrow — that pace is high.
-          Consider adding a catch-up day or extending your deadline by a few days.
-        </div>
-      `;
-    } else {
-      recHtml = `
-        <div class="dc-rec">
-          To finish on time, average <strong>${needStr} questions/day</strong> from tomorrow onward.
-        </div>
-      `;
-    }
-  }
-  html += `
-    <div class="dc-section">
-      <div class="dc-label">Recommendation</div>
-      ${recHtml}
-    </div>
-  `;
-
-  // ── 4. Daily chart (last 20 days including today)
-  const allDays = [
-    ...state.dailyHistory,
-    { date: todayStr(), questions: state.questionsToday },
-  ].slice(-20);
-
-  html += `<div class="dc-section"><div class="dc-label">Daily delta — goal 10/day</div>`;
-
-  if (!allDays.length) {
-    html += `<p class="dc-chart-empty">No data yet. Check back after logging a few days.</p>`;
-  } else {
-    const deltas = allDays.map(d => ({ date: d.date, delta: d.questions - 10 }));
-    const maxAbs = Math.max(1, ...deltas.map(d => Math.abs(d.delta)));
-
-    for (const { date, delta } of deltas) {
-      const pct     = Math.min(48, (Math.abs(delta) / maxAbs) * 48);
-      const vcls    = delta > 0 ? 'pos' : delta < 0 ? 'neg' : 'zero';
-      const valStr  = delta > 0 ? `+${delta}` : `${delta}`;
-      const barHtml = delta > 0
-        ? `<div class="dc-chart-bar dc-chart-pos" style="width:${pct}%"></div>`
-        : delta < 0
-          ? `<div class="dc-chart-bar dc-chart-neg" style="width:${pct}%"></div>`
-          : '';
-
-      html += `
-        <div class="dc-chart-row">
-          <span class="dc-chart-date">${fmtDate(date)}</span>
-          <div class="dc-chart-wrap">
-            <div class="dc-chart-axis"></div>
-            ${barHtml}
-          </div>
-          <span class="dc-chart-val ${vcls}">${valStr}</span>
-        </div>
-      `;
-    }
-  }
-
-  html += `</div>`;
-  body.innerHTML = html;
-  document.getElementById('deficit-overlay').classList.remove('hidden');
-}
-
-/* ─── INVENTORY ───────────────────────────────────────────────────────────── */
-
-function renderClipsTable(containerId, clips) {
-  const el = document.getElementById(containerId);
-  el.innerHTML = '';
-  let hasAny = false;
-  for (const color of ALL_COLORS) {
-    const count = clips[color] || 0;
-    if (count === 0) continue;
-    hasAny = true;
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td><span class="clip-swatch swatch-${color}"></span>${color.charAt(0).toUpperCase() + color.slice(1)}</td>
-      <td>${count}</td>
-    `;
-    el.appendChild(tr);
-  }
-  if (!hasAny) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td colspan="2" class="empty-msg">No clips yet.</td>`;
-    el.appendChild(tr);
-  }
-}
-
-function buildCashinButtons(clips, type) {
-  const section = document.getElementById(`${type}-cashin-section`);
-  section.innerHTML = '';
-  const options = getCashinOptions(clips);
-  if (!options.length) return;
-
-  for (const opt of options) {
-    const btn = document.createElement('button');
-    btn.className = 'cashin-btn';
-    btn.textContent = opt.label;
-    btn.addEventListener('click', () => {
-      showConfirm(`Cash in: ${opt.label}?`, () => {
-        pushUndo('cash-in');
-        for (const [color, count] of Object.entries(opt.spend)) {
-          state[`${type}Clips`][color] -= count;
-        }
-        const reward = state.rewards[type][opt.tier] || tierLabel(opt.tier);
-        state.history.unshift({ date: todayStr(), type: `${type} cash-in`, tier: opt.tier, reward });
-        if (state.history.length > 80) state.history = state.history.slice(0, 80);
-        saveState();
-        alert(`${tierLabel(opt.tier)} unlocked!\n\n${reward}`);
-        renderInventory();
-      });
-    });
-    section.appendChild(btn);
-  }
-}
-
-function getCashinOptions(clips) {
-  const options = [];
-  if (clips[GOLD] >= 1) {
-    options.push({ label: '1 gold clip — Tier 3', tier: 'tier3', spend: { gold: 1 } });
-  }
-  for (const color of CLIP_COLORS) {
-    const count = clips[color] || 0;
-    if (count >= 3) options.push({ label: `3 ${color} clips — Tier 3`, tier: 'tier3', spend: { [color]: 3 } });
-    if (count >= 2) options.push({ label: `2 ${color} clips — Tier 2`, tier: 'tier2', spend: { [color]: 2 } });
-  }
-  return options;
-}
-
-function renderBankedRewards() {
-  const el = document.getElementById('banked-rewards-list');
-  if (!state.bankedRewards.length) {
-    el.innerHTML = '<p class="empty-msg">No banked rewards yet.</p>';
-    return;
-  }
-  el.innerHTML = '';
-  for (const r of state.bankedRewards) {
-    const mins = extractMinutes(r.reward);
-    const item = document.createElement('div');
-    item.className = 'banked-item';
-    item.innerHTML = `
-      <div class="banked-name">${r.reward}</div>
-      <div class="banked-meta">${r.type.charAt(0).toUpperCase() + r.type.slice(1)} · ${tierLabel(r.tier)}${mins ? ' · ' + mins : ''} · ${fmtDateLong(r.date)}</div>
-      <div class="banked-actions">
-        <button class="banked-btn claim" data-id="${r.id}">Claim</button>
-        <button class="banked-btn del" data-id="${r.id}">Delete</button>
-      </div>
-    `;
-    item.querySelector('.banked-btn.claim').addEventListener('click', () => {
-      claimBankedReward(r.id);
-    });
-    item.querySelector('.banked-btn.del').addEventListener('click', () => {
-      showConfirm('Delete this banked reward?', () => deleteBankedReward(r.id));
-    });
-    el.appendChild(item);
-  }
-}
-
-function renderInventory() {
-  renderBankedRewards();
-  renderClipsTable('practice-clips-grid', state.practiceClips);
-  renderClipsTable('workout-clips-grid', state.workoutClips);
-
-  const pTotal = totalClips(state.practiceClips);
-  const wTotal = totalClips(state.workoutClips);
-
-  const ptd = document.getElementById('practice-tier-display');
-  if (pTotal === 0) ptd.textContent = 'No clips yet. Log practice blocks to earn clips.';
-  else if (pTotal === 1) ptd.textContent = '1 clip — 1 more to unlock a spin';
-  else {
-    const spins = Math.floor(pTotal / 2);
-    ptd.textContent = `${pTotal} clips — ${spins} spin${spins !== 1 ? 's' : ''} available`;
-  }
-
-  const wtd = document.getElementById('workout-tier-display');
-  if (wTotal === 0) wtd.textContent = 'No clips yet. Complete workouts to earn clips.';
-  else wtd.textContent = `${wTotal} clip${wTotal !== 1 ? 's' : ''} — ${wTotal} spin${wTotal !== 1 ? 's' : ''} available`;
-
-  buildCashinButtons(state.practiceClips, 'practice');
-  buildCashinButtons(state.workoutClips, 'workout');
-}
-
-/* ─── PROGRESS ────────────────────────────────────────────────────────────── */
+/* ═══ PROGRESS ═══════════════════════════════════════════════════════════ */
 
 function renderProgress() {
-  const q  = state.totalQuestions;
-  const d  = state.practiceDays;
-  const w  = state.weekWorkouts;
-  const wq = state.weekQuestions;
+  const dn    = dayNumber();
+  const total = state.totalQuestions;
+  const exp   = expectedQuestions();
+  const cd    = total - exp;
+  const rem   = Math.max(0, TOTAL_Q_GOAL - total);
+  const dLeft = Math.max(0, CHALLENGE_DAYS - dn);
+  const need  = dLeft > 0 ? (rem / dLeft).toFixed(1) : '—';
 
-  document.getElementById('prog-questions-label').textContent = `${q} / 400`;
-  document.getElementById('prog-days-label').textContent      = `${d} / 40`;
-  document.getElementById('prog-workouts-label').textContent  = `${w} / 4`;
-  document.getElementById('prog-week-questions').textContent  = wq;
+  document.getElementById('prog-q').textContent   = `${total} / ${TOTAL_Q_GOAL}`;
+  document.getElementById('prog-day').textContent = `${dn} / ${CHALLENGE_DAYS}`;
+  document.getElementById('prog-need').textContent = need;
 
-  setWidth('prog-questions-bar', Math.min(100, (q / 400) * 100));
-  setWidth('prog-days-bar',      Math.min(100, (d /  40) * 100));
-  setWidth('prog-workouts-bar',  Math.min(100, (w /   4) * 100));
+  const netEl = document.getElementById('prog-net');
+  netEl.textContent = cd > 0 ? `+${cd}` : `${cd}`;
+  netEl.className   = `metric-v${cd < 0 ? ' neg' : cd > 0 ? ' pos' : ''}`;
 
-  const wb = document.getElementById('weekly-checkpoint-badge');
-  if (wq >= 70) {
-    wb.textContent = 'Done';
-    wb.classList.add('done');
-  } else {
-    wb.textContent = `${wq}/70`;
-    wb.classList.remove('done');
-  }
+  const avg3 = rollingAvg(3);
+  const avg7 = rollingAvg(7);
+  document.getElementById('avg3').textContent = avg3 != null ? `${avg3.toFixed(1)} / day` : '—';
+  document.getElementById('avg7').textContent = avg7 != null ? `${avg7.toFixed(1)} / day` : '—';
 
-  const listEl = document.getElementById('history-list');
-  if (!state.history.length) {
-    listEl.innerHTML = '<p class="empty-msg">No history yet.</p>';
+  document.getElementById('prog-workout-week').textContent = getWeekWorkBlocks();
+
+  buildProgressChart();
+}
+
+function buildProgressChart() {
+  const el = document.getElementById('progress-chart');
+  el.innerHTML = '';
+
+  const today = todayStr();
+  const all   = getDatesRange(state.startDate, today);
+  const last20 = all.slice(-20);
+
+  if (!last20.length) {
+    el.innerHTML = '<span style="font-size:13px;color:var(--muted)">No data yet.</span>';
     return;
   }
-  listEl.innerHTML = '';
-  for (const entry of state.history) {
-    const row = document.createElement('div');
-    row.className = 'history-entry';
-    row.innerHTML = `
-      <div class="history-left">${fmtDateLong(entry.date)}<br>${entry.type}</div>
-      <div class="history-right">${tierLabel(entry.tier)}<br><span class="history-reward">${entry.reward || ''}</span></div>
-    `;
-    listEl.appendChild(row);
+
+  // Center axis
+  const axis = document.createElement('div');
+  axis.className = 'vchart-axis';
+  el.appendChild(axis);
+
+  const deltas = last20.map(d => (state.questionsByDate[d] || 0) - DAILY_Q_GOAL);
+  const maxAbs = Math.max(1, ...deltas.map(d => Math.abs(d)));
+
+  for (const delta of deltas) {
+    const col = document.createElement('div');
+    col.className = 'vchart-col';
+    if (delta !== 0) {
+      const pct = Math.min(44, (Math.abs(delta) / maxAbs) * 44);
+      const bar = document.createElement('div');
+      bar.className = `vchart-bar ${delta > 0 ? 'vchart-pos' : 'vchart-neg'}`;
+      bar.style.height = `${pct}%`;
+      col.appendChild(bar);
+    }
+    el.appendChild(col);
+  }
+
+  const lbl = document.getElementById('vchart-start');
+  const n   = last20.length - 1;
+  lbl.textContent = n > 0 ? `${n} day${n > 1 ? 's' : ''} ago` : 'Today';
+}
+
+/* ═══ REWARDS ════════════════════════════════════════════════════════════ */
+
+function renderRewards() {
+  const avail     = state.rewardBlocks.length;
+  const spentToday = spentTodayMin();
+  const spentWeek  = spentWeekMin();
+  const cap = state.settings.weeklyRewardCapMinutes;
+
+  document.getElementById('rew-blocks').textContent     = avail;
+  document.getElementById('rew-mins').textContent       = avail * 30;
+  document.getElementById('rew-spent-today').textContent = spentToday;
+  document.getElementById('rew-spent-week').textContent  = spentWeek;
+  document.getElementById('rew-cap').textContent         = cap;
+
+  renderBlockGrid();
+  renderSpentHistory();
+  renderDiscardedHistory();
+}
+
+function renderBlockGrid() {
+  const el = document.getElementById('reward-block-grid');
+  if (!state.rewardBlocks.length) {
+    el.innerHTML = '<p class="empty-state" style="width:100%">No reward blocks yet. Spin to earn some.</p>';
+    return;
+  }
+  el.innerHTML = '';
+  for (const block of state.rewardBlocks) {
+    const sq = document.createElement('div');
+    sq.className  = 'reward-block';
+    sq.dataset.id = block.id;
+    sq.addEventListener('click', () => showSpendConfirm(block.id));
+    el.appendChild(sq);
   }
 }
 
-function setWidth(id, pct) {
-  const el = document.getElementById(id);
-  if (el) el.style.width = `${pct}%`;
+let pendingSpendId = null;
+
+function showSpendConfirm(blockId) {
+  pendingSpendId = blockId;
+  const warn = document.getElementById('spend-cap-warn');
+  if (spentWeekMin() + 30 > state.settings.weeklyRewardCapMinutes) {
+    warn.classList.remove('hidden');
+  } else {
+    warn.classList.add('hidden');
+  }
+  showSheet('spend-confirm-sheet');
 }
 
-/* ─── SETTINGS ────────────────────────────────────────────────────────────── */
-
-function renderSettings() {
-  renderRewardFields('practice-reward-fields', 'practice');
-  renderRewardFields('workout-reward-fields', 'workout');
+function confirmSpendBlock() {
+  if (pendingSpendId === null) return;
+  const idx = state.rewardBlocks.findIndex(b => b.id === pendingSpendId);
+  if (idx === -1) { pendingSpendId = null; return; }
+  state.rewardBlocks.splice(idx, 1);
+  state.spentHistory.push({
+    id: state.nextId++,
+    blocksSpent: 1,
+    minutesSpent: 30,
+    spentAt: new Date().toISOString(),
+  });
+  pendingSpendId = null;
+  saveState();
+  hideSheet('spend-confirm-sheet');
+  renderRewards();
 }
 
-function renderRewardFields(containerId, type) {
-  const el = document.getElementById(containerId);
+function spendNBlocks(n) {
+  if (n <= 0 || n > state.rewardBlocks.length) return false;
+  state.rewardBlocks.splice(0, n);
+  state.spentHistory.push({
+    id: state.nextId++,
+    blocksSpent: n,
+    minutesSpent: n * 30,
+    spentAt: new Date().toISOString(),
+  });
+  saveState();
+  renderRewards();
+  return true;
+}
+
+function renderSpentHistory() {
+  const el = document.getElementById('spent-history-list');
+  if (!state.spentHistory.length) {
+    el.innerHTML = '<p class="empty-state">No history yet.</p>';
+    return;
+  }
+
+  // Group by date (newest first)
+  const grouped = {};
+  for (const e of [...state.spentHistory].reverse()) {
+    const ds = e.spentAt.slice(0, 10);
+    if (!grouped[ds]) grouped[ds] = [];
+    grouped[ds].push(e);
+  }
+
   el.innerHTML = '';
-  const tiers  = ['tier1', 'tier2', 'tier3', 'jackpot', 'bonus'];
-  const labels = { tier1: 'Tier 1', tier2: 'Tier 2', tier3: 'Tier 3', jackpot: 'Jackpot', bonus: 'Bonus' };
-  for (const tier of tiers) {
+  for (const [ds, entries] of Object.entries(grouped)) {
+    const dailyMins = entries.reduce((s, e) => s + e.minutesSpent, 0);
+    const g = document.createElement('div');
+    g.className = 'hist-group';
+    g.innerHTML = `<div class="hist-date">${fmtDateLong(ds)}</div>`;
+    for (const e of entries) {
+      const row = document.createElement('div');
+      row.className = 'hist-entry';
+      row.innerHTML = `
+        <span class="hist-time">${fmtTime(e.spentAt)}</span>
+        <span class="hist-val">${e.blocksSpent} block${e.blocksSpent !== 1 ? 's' : ''} · ${e.minutesSpent} min</span>
+      `;
+      g.appendChild(row);
+    }
+    const tot = document.createElement('div');
+    tot.className   = 'hist-daily-total';
+    tot.textContent = `Daily total: ${dailyMins} min`;
+    g.appendChild(tot);
+    el.appendChild(g);
+  }
+}
+
+function renderDiscardedHistory() {
+  const el = document.getElementById('discarded-history-list');
+  if (!state.discardedHistory.length) {
+    el.innerHTML = '<p class="empty-state">None discarded.</p>';
+    return;
+  }
+  el.innerHTML = '';
+  for (const e of [...state.discardedHistory].reverse()) {
     const row = document.createElement('div');
-    row.className = 'reward-field';
+    row.className = 'hist-entry';
     row.innerHTML = `
-      <label>${labels[tier]}</label>
-      <input class="reward-input" type="text" data-type="${type}" data-tier="${tier}" value="${escapeHtml(state.rewards[type][tier] || '')}" />
+      <span class="hist-time">${fmtDateLong(e.discardedAt.slice(0,10))} · ${fmtTime(e.discardedAt)}</span>
+      <span class="hist-val">${e.tier} — ${esc(e.rewardText)}</span>
     `;
     el.appendChild(row);
   }
 }
 
-function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+/* ═══ INVENTORY ══════════════════════════════════════════════════════════ */
+
+function renderInventory() {
+  document.getElementById('inv-tokens').textContent     = state.sharedTokens;
+  document.getElementById('inv-spin-cost').textContent  = `${state.settings.spinCost} blocks`;
+  document.getElementById('inv-spins').textContent      = getSpinsAvail();
+  document.getElementById('inv-prac-today').textContent = getPracToday();
+  document.getElementById('inv-work-today').textContent = getWorkToday();
+  document.getElementById('inv-prac-total').textContent = state.totalPracticeBlocks;
+  document.getElementById('inv-work-total').textContent = state.totalWorkoutBlocks;
 }
 
-function saveRewards() {
-  document.querySelectorAll('.reward-input').forEach(input => {
-    state.rewards[input.dataset.type][input.dataset.tier] = input.value.trim();
-  });
+/* ═══ SETTINGS ═══════════════════════════════════════════════════════════ */
+
+function renderSettings() {
+  document.getElementById('set-spin-cost-val').textContent = `${state.settings.spinCost} blocks`;
+  document.getElementById('set-cap-val').textContent       = `${state.settings.weeklyRewardCapMinutes} min`;
+}
+
+/* ═══ DEFICIT DETAIL SHEET ═══════════════════════════════════════════════ */
+
+function showDeficitSheet() {
+  const dn        = dayNumber();
+  const total     = state.totalQuestions;
+  const exp       = expectedQuestions();
+  const cd        = total - exp;
+  const rem       = Math.max(0, TOTAL_Q_GOAL - total);
+  const dLeft     = Math.max(0, CHALLENGE_DAYS - dn);
+  const dInclTdy  = Math.max(1, CHALLENGE_DAYS - dn + 1);
+  const req       = dLeft > 0 ? rem / dLeft : null;
+  const cdStr     = cd > 0 ? `+${cd}` : `${cd}`;
+  const cdCls     = cd < 0 ? 'neg' : cd > 0 ? 'pos' : '';
+  const needStr   = req ? req.toFixed(1) : '—';
+  const avg3      = rollingAvg(3);
+  const avg7      = rollingAvg(7);
+
+  function paceTag(avg) {
+    if (avg === null) return '';
+    if (avg >= 10)   return ' — On pace';
+    if (avg >= 8)    return ' — Slightly behind';
+    return ' — Behind';
+  }
+
+  // Recommendation
+  let recCls = '', recTxt = '';
+  if (rem === 0) {
+    recCls = 'good'; recTxt = 'All 400 questions completed!';
+  } else if (dLeft === 0) {
+    recTxt = `Last day — ${rem} question${rem !== 1 ? 's' : ''} remaining.`;
+  } else if (cd >= 0) {
+    const min = (rem / dInclTdy).toFixed(1);
+    recCls = 'good';
+    recTxt = `You're <strong>${cd} question${cd !== 1 ? 's' : ''} ahead</strong>. You could average as few as <strong>${min}/day</strong> (including today) and still finish on time.`;
+  } else if (req && req > 16) {
+    recCls = 'warn';
+    recTxt = `To finish on time you'd need <strong>${needStr}/day</strong> from tomorrow. That pace is high — consider a catch-up day or extending your timeline.`;
+  } else {
+    recTxt = `To finish on time, average <strong>${needStr} questions/day</strong> from tomorrow onward.`;
+  }
+
+  // Daily chart
+  const last20 = getDatesRange(state.startDate, todayStr()).slice(-20);
+  let chartHtml = '';
+  if (last20.length) {
+    const deltas = last20.map(d => ({ date: d, delta: (state.questionsByDate[d] || 0) - DAILY_Q_GOAL }));
+    const maxAbs = Math.max(1, ...deltas.map(x => Math.abs(x.delta)));
+    chartHtml = deltas.map(({ date, delta }) => {
+      const pct  = Math.min(48, (Math.abs(delta) / maxAbs) * 48);
+      const vcls = delta > 0 ? 'pos' : delta < 0 ? 'neg' : '';
+      const vstr = delta > 0 ? `+${delta}` : `${delta}`;
+      const bar  = delta > 0
+        ? `<div class="dchart-bar dchart-pos" style="width:${pct}%"></div>`
+        : delta < 0
+          ? `<div class="dchart-bar dchart-neg" style="width:${pct}%"></div>`
+          : '';
+      return `
+        <div class="dchart-row">
+          <span class="dchart-date">${fmtDate(date)}</span>
+          <div class="dchart-wrap"><div class="dchart-axis"></div>${bar}</div>
+          <span class="dchart-val ${vcls}">${vstr}</span>
+        </div>`;
+    }).join('');
+  }
+
+  document.getElementById('deficit-body').innerHTML = `
+    <div class="def-grid-2">
+      <div class="def-card"><div class="def-card-v">${total}</div><div class="def-card-k">Completed</div></div>
+      <div class="def-card"><div class="def-card-v">${exp}</div><div class="def-card-k">Expected by today</div></div>
+      <div class="def-card"><div class="def-card-v ${cdCls}">${cdStr}</div><div class="def-card-k">Net delta</div></div>
+      <div class="def-card"><div class="def-card-v">${rem}</div><div class="def-card-k">Remaining</div></div>
+      <div class="def-card"><div class="def-card-v">${dLeft}</div><div class="def-card-k">Days left</div></div>
+      <div class="def-card"><div class="def-card-v">${needStr}</div><div class="def-card-k">Needed / day</div></div>
+    </div>
+    <div class="def-sec">Rolling pace</div>
+    <div class="def-pace-row">
+      <span>Last 3 days${paceTag(avg3)}</span>
+      <strong class="def-pace-v">${avg3 != null ? avg3.toFixed(1) + '/day' : '—'}</strong>
+    </div>
+    <div class="def-pace-row">
+      <span>Last 7 days${paceTag(avg7)}</span>
+      <strong class="def-pace-v">${avg7 != null ? avg7.toFixed(1) + '/day' : '—'}</strong>
+    </div>
+    <div class="def-sec">Recommendation</div>
+    <div class="def-rec ${recCls}">${recTxt}</div>
+    ${chartHtml ? `<div class="def-sec">Daily delta — goal ${DAILY_Q_GOAL}/day</div>${chartHtml}` : ''}
+  `;
+
+  showSheet('deficit-sheet');
+}
+
+/* ═══ SPIN ═══════════════════════════════════════════════════════════════ */
+
+const WHEEL = [
+  { tier: 'tier1',   p: 0.40 },
+  { tier: 'tier2',   p: 0.30 },
+  { tier: 'tier3',   p: 0.20 },
+  { tier: 'bonus',   p: 0.08 },
+  { tier: 'jackpot', p: 0.02 },
+];
+
+function spinWheel() {
+  let r = Math.random(), cum = 0;
+  for (const { tier, p } of WHEEL) {
+    cum += p;
+    if (r < cum) return tier;
+  }
+  return 'tier1';
+}
+
+function tierLabel(tier) {
+  return { tier1:'Tier 1', tier2:'Tier 2', tier3:'Tier 3', jackpot:'Jackpot', bonus:'Bonus' }[tier] || tier;
+}
+
+let pendingSpinResult = null;
+
+function doSpin() {
+  if (getSpinsAvail() <= 0) return;
+
+  state.sharedTokens = Math.max(0, state.sharedTokens - state.settings.spinCost);
   saveState();
-  const btn = document.getElementById('save-rewards-btn');
-  btn.textContent = 'Saved';
-  setTimeout(() => { btn.textContent = 'Save Reward Text'; }, 1500);
+
+  const tier   = spinWheel();
+  const cfg    = state.settings.rewards[tier];
+  const text   = cfg.text;
+  const blocks = cfg.blocks;
+
+  pendingSpinResult = { tier, text, blocks };
+
+  if (tier === 'bonus') {
+    showSheet('bonus-sheet');
+  } else {
+    document.getElementById('result-tier').textContent   = tierLabel(tier);
+    document.getElementById('result-blocks').textContent = `${blocks} reward block${blocks !== 1 ? 's' : ''}`;
+    document.getElementById('result-mins').textContent   = `${blocks * 30} min`;
+    document.getElementById('result-text').textContent   = text;
+    showSheet('spin-result-sheet');
+  }
+
+  renderToday();
 }
 
-/* ─── DATA ────────────────────────────────────────────────────────────────── */
+function addToRewards() {
+  if (!pendingSpinResult) return;
+  const { tier, blocks } = pendingSpinResult;
+  for (let i = 0; i < blocks; i++) {
+    state.rewardBlocks.push({ id: state.nextId++, earnedAt: new Date().toISOString(), tier });
+  }
+  pendingSpinResult = null;
+  saveState();
+  hideSheet('spin-result-sheet');
+  renderScreen(currentScreen);
+}
 
-function exportData() {
+function discardSpin() {
+  if (!pendingSpinResult) return;
+  showConfirm('Discard this reward?', () => {
+    const { tier, text } = pendingSpinResult;
+    state.discardedHistory.push({
+      id: state.nextId++,
+      tier,
+      rewardText: text,
+      discardedAt: new Date().toISOString(),
+    });
+    pendingSpinResult = null;
+    saveState();
+    hideSheet('spin-result-sheet');
+    renderScreen(currentScreen);
+  });
+}
+
+function handleBonusDone() {
+  // Extra 30-min block completed → earn back one token (= one extra spin opportunity)
+  state.sharedTokens++;
+  saveState();
+  hideSheet('bonus-sheet');
+  pendingSpinResult = null;
+  renderToday();
+}
+
+function handleBonusSkip() {
+  if (pendingSpinResult) {
+    state.discardedHistory.push({
+      id: state.nextId++,
+      tier: 'bonus',
+      rewardText: 'Bonus skipped',
+      discardedAt: new Date().toISOString(),
+    });
+    pendingSpinResult = null;
+    saveState();
+  }
+  hideSheet('bonus-sheet');
+}
+
+/* ═══ SHEET MANAGEMENT ═══════════════════════════════════════════════════ */
+
+function showSheet(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('hidden');
+}
+
+function hideSheet(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.add('hidden');
+}
+
+let confirmCallback = null;
+
+function showConfirm(msg, onConfirm) {
+  document.getElementById('confirm-msg').textContent = msg;
+  confirmCallback = onConfirm;
+  showSheet('confirm-sheet');
+}
+
+/* ═══ SETTINGS SHEETS ════════════════════════════════════════════════════ */
+
+function openSpinCostSheet() {
+  document.getElementById('spin-cost-input').value = state.settings.spinCost;
+  showSheet('spin-cost-sheet');
+}
+
+function saveSpinCost() {
+  const v = parseInt(document.getElementById('spin-cost-input').value, 10);
+  if (isNaN(v) || v < 1) return;
+  state.settings.spinCost = v;
+  saveState();
+  hideSheet('spin-cost-sheet');
+  renderSettings();
+  renderToday();
+  renderInventory();
+}
+
+function openCapSheet() {
+  document.getElementById('cap-input').value = state.settings.weeklyRewardCapMinutes;
+  showSheet('cap-sheet');
+}
+
+function saveCap() {
+  const v = parseInt(document.getElementById('cap-input').value, 10);
+  if (isNaN(v) || v < 30) return;
+  state.settings.weeklyRewardCapMinutes = v;
+  saveState();
+  hideSheet('cap-sheet');
+  renderSettings();
+}
+
+function openRewardsSheet() {
+  const tiers  = ['tier1','tier2','tier3','jackpot','bonus'];
+  const labels = { tier1:'Tier 1', tier2:'Tier 2', tier3:'Tier 3', jackpot:'Jackpot', bonus:'Bonus' };
+  const body   = document.getElementById('rewards-settings-body');
+
+  body.innerHTML = tiers.map(t => `
+    <div class="rew-tier-row">
+      <div class="rew-tier-lbl">${labels[t]}</div>
+      <div class="rew-tier-inputs">
+        <input class="form-input" type="text"   data-tier="${t}" data-field="text"   value="${esc(state.settings.rewards[t].text)}"   placeholder="Description" />
+        <input class="form-input" type="number" data-tier="${t}" data-field="blocks" value="${state.settings.rewards[t].blocks}" min="0" max="20" inputmode="numeric" placeholder="#" />
+      </div>
+    </div>
+  `).join('') + `<button class="btn btn-solid btn-full mt16" id="rew-save-btn">Save</button>`;
+
+  document.getElementById('rew-save-btn').addEventListener('click', () => {
+    body.querySelectorAll('[data-tier]').forEach(input => {
+      const t = input.dataset.tier, f = input.dataset.field;
+      if (f === 'text')   state.settings.rewards[t].text   = input.value.trim();
+      if (f === 'blocks') {
+        const v = parseInt(input.value, 10);
+        if (!isNaN(v) && v >= 0) state.settings.rewards[t].blocks = v;
+      }
+    });
+    saveState();
+    hideSheet('rewards-settings-sheet');
+  });
+
+  showSheet('rewards-settings-sheet');
+}
+
+/* ═══ DATA MANAGEMENT ════════════════════════════════════════════════════ */
+
+function exportBackup(filename) {
+  const fn   = filename || `habit-wheel-backup-${fmtTimestamp()}.json`;
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
-  a.href = url;
-  a.download = `habit-wheel-${todayStr()}.json`;
-  a.click();
+  a.href = url; a.download = fn; a.click();
   URL.revokeObjectURL(url);
 }
 
-function importData(file) {
+function importBackup(file) {
   const reader = new FileReader();
   reader.onload = e => {
     try {
       const imported = JSON.parse(e.target.result);
-      if (typeof imported !== 'object') throw new Error('invalid');
-      state = { ...defaultState(), ...imported };
-      saveState();
-      undoStack = [];
-      renderScreen(currentScreen);
-      alert('Backup imported.');
+      if (typeof imported !== 'object' || !imported.startDate) throw new Error('invalid');
+      showConfirm('Replace all current data with this backup?', () => {
+        state = { ...defaultState(), ...imported };
+        saveState();
+        renderScreen(currentScreen);
+        renderSettings();
+      });
     } catch {
-      alert('Could not read backup file.');
+      alert('Could not read backup file — it may be corrupt or from a different version.');
     }
   };
   reader.readAsText(file);
 }
 
-function resetAll() {
-  state = defaultState();
-  saveState();
-  undoStack = [];
-  currentSpinResult = null;
-  bonusSpinsRemaining = 0;
-  spinType = 'practice';
-
-  const ra = document.getElementById('spin-result-area');
-  if (ra) { ra.innerHTML = ''; ra.classList.add('hidden'); }
-  const sa = document.getElementById('spin-actions');
-  if (sa) sa.classList.add('hidden');
-  const bs = document.getElementById('bonus-section');
-  if (bs) { bs.classList.add('hidden'); bs.style.display = 'none'; }
-
-  renderScreen(currentScreen);
-  renderUndoBtn();
+function resetApp() {
+  showConfirm(
+    'This will erase all data. A backup will be downloaded first. Continue?',
+    () => {
+      exportBackup(`habit-wheel-backup-${fmtTimestamp()}.json`);
+      setTimeout(() => {
+        localStorage.removeItem(STORAGE_KEY);
+        location.reload();
+      }, 800);
+    }
+  );
 }
 
-/* ─── CONFIRM MODAL ───────────────────────────────────────────────────────── */
+/* ═══ BULK SPEND SHEET ═══════════════════════════════════════════════════ */
 
-let confirmCallback = null;
-
-function showConfirm(message, onConfirm) {
-  document.getElementById('confirm-msg').textContent = message;
-  document.getElementById('confirm-overlay').classList.remove('hidden');
-  confirmCallback = onConfirm;
+function openBulkSpend(preset) {
+  const inp = document.getElementById('bulk-count');
+  inp.value = preset != null ? preset : 1;
+  const n   = parseInt(inp.value, 10);
+  const capWarn = document.getElementById('bulk-cap-warn');
+  if (n > 0 && spentWeekMin() + n * 30 > state.settings.weeklyRewardCapMinutes) {
+    capWarn.classList.remove('hidden');
+  } else {
+    capWarn.classList.add('hidden');
+  }
+  showSheet('bulk-spend-sheet');
 }
 
-function hideConfirm() {
-  document.getElementById('confirm-overlay').classList.add('hidden');
-  confirmCallback = null;
-}
+/* ═══ EVENT BINDING ══════════════════════════════════════════════════════ */
 
-/* ─── INIT ────────────────────────────────────────────────────────────────── */
-
-document.addEventListener('DOMContentLoaded', () => {
-  checkDateReset();
-
-  // Nav
+function initEvents() {
+  // Bottom nav
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => showScreen(btn.dataset.screen));
   });
 
-  // Spin type toggle
-  document.querySelectorAll('.type-toggle-btn').forEach(btn => {
-    btn.addEventListener('click', () => { spinType = btn.dataset.spintype; renderToday(); });
+  // Practice +/−
+  document.getElementById('practice-plus').addEventListener('click', () => {
+    const t = todayStr();
+    state.practiceByDate[t] = (state.practiceByDate[t] || 0) + 1;
+    state.sharedTokens++;
+    state.totalPracticeBlocks++;
+    saveState(); renderToday();
   });
 
-  // Log practice block
-  document.getElementById('log-block-btn').addEventListener('click', () => {
-    pushUndo('log practice block');
-    state.practiceBlocks++;
-    const color = randomColor();
-    state.practiceClips[color]++;
-    state.practiceClipTotal++;
-    saveState();
-
-    const btn = document.getElementById('log-block-btn');
-    btn.textContent = `Block ${state.practiceBlocks} logged`;
-    setTimeout(() => { btn.textContent = 'Log Practice Block'; }, 1200);
-    renderToday();
+  document.getElementById('practice-minus').addEventListener('click', () => {
+    const t = todayStr();
+    const b = state.practiceByDate[t] || 0;
+    if (b <= 0) return;
+    if (state.sharedTokens <= 0) { alert('Cannot remove — no shared tokens to subtract.'); return; }
+    state.practiceByDate[t] = b - 1;
+    state.sharedTokens      = Math.max(0, state.sharedTokens - 1);
+    state.totalPracticeBlocks = Math.max(0, state.totalPracticeBlocks - 1);
+    saveState(); renderToday();
   });
 
-  // +2 questions
+  // Questions +/−
   document.getElementById('q-plus2').addEventListener('click', () => {
-    pushUndo('+2 questions');
-    state.questionsToday += 2;
+    const t = todayStr();
+    state.questionsByDate[t] = (state.questionsByDate[t] || 0) + 2;
     state.totalQuestions += 2;
-    state.weekQuestions  += 2;
-    saveState();
-    renderToday();
+    saveState(); renderToday();
   });
 
-  // -2 questions
   document.getElementById('q-minus2').addEventListener('click', () => {
-    if (state.questionsToday === 0) return;
-    pushUndo('-2 questions');
-    const actual = Math.min(2, state.questionsToday);
-    state.questionsToday  = Math.max(0, state.questionsToday - 2);
-    state.totalQuestions  = Math.max(0, state.totalQuestions - actual);
-    state.weekQuestions   = Math.max(0, state.weekQuestions  - actual);
-    saveState();
-    renderToday();
+    const t   = todayStr();
+    const cur = state.questionsByDate[t] || 0;
+    if (cur <= 0) return;
+    const sub = Math.min(2, cur);
+    state.questionsByDate[t]  = cur - sub;
+    state.totalQuestions      = Math.max(0, state.totalQuestions - sub);
+    saveState(); renderToday();
   });
 
-  // Set exact
-  document.getElementById('save-questions-btn').addEventListener('click', () => {
-    const val = parseInt(document.getElementById('questions-input').value, 10);
-    if (isNaN(val) || val < 0) return;
-    pushUndo('set questions');
-    const prev = state.questionsToday;
-    state.questionsToday = val;
-    const diff = val - prev;
-    if (diff > 0) { state.totalQuestions += diff; state.weekQuestions += diff; }
-    else if (diff < 0) {
-      state.totalQuestions = Math.max(0, state.totalQuestions + diff);
-      state.weekQuestions  = Math.max(0, state.weekQuestions  + diff);
-    }
-    saveState();
-    renderToday();
-    document.getElementById('questions-input').value = '';
-    const btn = document.getElementById('save-questions-btn');
-    btn.textContent = 'Set';
+  // Workout +/−
+  document.getElementById('workout-plus').addEventListener('click', () => {
+    const t = todayStr();
+    state.workoutByDate[t] = (state.workoutByDate[t] || 0) + 1;
+    state.sharedTokens++;
+    state.totalWorkoutBlocks++;
+    saveState(); renderToday();
   });
 
-  // Workout
-  document.getElementById('workout-btn').addEventListener('click', () => {
-    if (state.workoutDone) return;
-    pushUndo('workout done');
-    state.workoutDone = true;
-    const color = randomColor();
-    state.workoutClips[color]++;
-    state.workoutClipTotal++;
-    state.weekWorkouts++;
-    saveState();
-    renderToday();
+  document.getElementById('workout-minus').addEventListener('click', () => {
+    const t = todayStr();
+    const b = state.workoutByDate[t] || 0;
+    if (b <= 0) return;
+    if (state.sharedTokens <= 0) { alert('Cannot remove — no shared tokens to subtract.'); return; }
+    state.workoutByDate[t] = b - 1;
+    state.sharedTokens     = Math.max(0, state.sharedTokens - 1);
+    state.totalWorkoutBlocks = Math.max(0, state.totalWorkoutBlocks - 1);
+    saveState(); renderToday();
   });
+
+  // Status pill → deficit sheet
+  document.getElementById('practice-status-pill').addEventListener('click', showDeficitSheet);
 
   // Spin
   document.getElementById('spin-btn').addEventListener('click', () => {
-    const avail = spinType === 'practice' ? practiceSpinsAvail() : workoutSpinsAvail();
-    if (avail <= 0) return;
     const btn = document.getElementById('spin-btn');
-    btn.disabled = true;
-    btn.textContent = 'Spinning...';
-    setTimeout(() => doSpin(spinType), 500);
+    btn.disabled    = true;
+    btn.textContent = 'Spinning…';
+    setTimeout(doSpin, 500);
   });
 
-  // Bank / Claim
-  document.getElementById('bank-reward-btn').addEventListener('click', bankReward);
-  document.getElementById('claim-now-btn').addEventListener('click', claimSpinNow);
+  // Spin result sheet
+  document.getElementById('add-to-rewards-btn').addEventListener('click', addToRewards);
+  document.getElementById('discard-btn').addEventListener('click', discardSpin);
 
-  // Bonus spin
-  document.getElementById('spin-bonus-btn').addEventListener('click', () => {
-    if (bonusSpinsRemaining <= 0) return;
-    doBonus();
+  // Bonus sheet
+  document.getElementById('bonus-done-btn').addEventListener('click', handleBonusDone);
+  document.getElementById('bonus-skip-btn').addEventListener('click', handleBonusSkip);
+
+  // Spend single block
+  document.getElementById('spend-confirm-btn').addEventListener('click', confirmSpendBlock);
+  document.getElementById('spend-cancel-btn').addEventListener('click', () => {
+    pendingSpendId = null;
+    hideSheet('spend-confirm-sheet');
   });
 
-  // Deficit detail
-  document.getElementById('daily-delta-btn').addEventListener('click', showDeficitDetail);
-  document.getElementById('deficit-close').addEventListener('click', () => {
-    document.getElementById('deficit-overlay').classList.add('hidden');
+  // Bulk spend
+  document.getElementById('spend-1-btn').addEventListener('click', () => {
+    if (!state.rewardBlocks.length) return;
+    openBulkSpend(1);
   });
-  document.getElementById('deficit-overlay').addEventListener('click', e => {
-    if (e.target === document.getElementById('deficit-overlay')) {
-      document.getElementById('deficit-overlay').classList.add('hidden');
+  document.getElementById('spend-2-btn').addEventListener('click', () => {
+    if (state.rewardBlocks.length < 2) return;
+    openBulkSpend(2);
+  });
+  document.getElementById('spend-custom-btn').addEventListener('click', () => openBulkSpend(null));
+
+  document.getElementById('bulk-confirm').addEventListener('click', () => {
+    const n = parseInt(document.getElementById('bulk-count').value, 10);
+    if (isNaN(n) || n <= 0) return;
+    if (n > state.rewardBlocks.length) {
+      alert(`You only have ${state.rewardBlocks.length} block${state.rewardBlocks.length !== 1 ? 's' : ''} available.`);
+      return;
+    }
+    spendNBlocks(n);
+    hideSheet('bulk-spend-sheet');
+  });
+  document.getElementById('bulk-cancel').addEventListener('click', () => hideSheet('bulk-spend-sheet'));
+
+  // Update cap warning as user changes bulk-count input
+  document.getElementById('bulk-count').addEventListener('input', () => {
+    const n   = parseInt(document.getElementById('bulk-count').value, 10);
+    const el  = document.getElementById('bulk-cap-warn');
+    if (n > 0 && spentWeekMin() + n * 30 > state.settings.weeklyRewardCapMinutes) {
+      el.classList.remove('hidden');
+    } else {
+      el.classList.add('hidden');
     }
   });
 
-  // Undo
-  document.getElementById('undo-btn').addEventListener('click', undoLast);
+  // Generic confirm sheet
+  document.getElementById('confirm-ok').addEventListener('click', () => {
+    hideSheet('confirm-sheet');
+    if (confirmCallback) { confirmCallback(); confirmCallback = null; }
+  });
+  document.getElementById('confirm-cancel').addEventListener('click', () => {
+    hideSheet('confirm-sheet');
+    confirmCallback = null;
+  });
 
-  // Settings
-  document.getElementById('save-rewards-btn').addEventListener('click', saveRewards);
-  document.getElementById('export-btn').addEventListener('click', exportData);
+  // Settings rows
+  document.getElementById('set-spin-cost').addEventListener('click', openSpinCostSheet);
+  document.getElementById('set-rewards').addEventListener('click', openRewardsSheet);
+  document.getElementById('set-cap').addEventListener('click', openCapSheet);
+  document.getElementById('spin-cost-save').addEventListener('click', saveSpinCost);
+  document.getElementById('cap-save').addEventListener('click', saveCap);
+
+  document.getElementById('set-export').addEventListener('click', () => exportBackup());
+  document.getElementById('set-import').addEventListener('click', () =>
+    document.getElementById('import-file-input').click()
+  );
   document.getElementById('import-file-input').addEventListener('change', e => {
     const file = e.target.files[0];
-    if (file) importData(file);
+    if (file) importBackup(file);
     e.target.value = '';
   });
-  document.getElementById('reset-btn').addEventListener('click', () => {
-    showConfirm('This will permanently delete all your data. Are you sure?', resetAll);
+  document.getElementById('set-reset').addEventListener('click', resetApp);
+
+  // data-close buttons (generic)
+  document.querySelectorAll('[data-close]').forEach(btn => {
+    btn.addEventListener('click', () => hideSheet(btn.dataset.close));
   });
 
-  // Confirm modal
-  document.getElementById('confirm-yes').addEventListener('click', () => {
-    hideConfirm();
-    if (confirmCallback) confirmCallback();
+  // Close sheets by tapping the dim overlay
+  document.querySelectorAll('.sheet-overlay').forEach(overlay => {
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) hideSheet(overlay.id);
+    });
   });
-  ['confirm-no', 'confirm-no2'].forEach(id => {
-    document.getElementById(id).addEventListener('click', hideConfirm);
-  });
-  document.getElementById('confirm-overlay').addEventListener('click', e => {
-    if (e.target === document.getElementById('confirm-overlay')) hideConfirm();
-  });
+}
 
+/* ═══ INIT ════════════════════════════════════════════════════════════════ */
+
+document.addEventListener('DOMContentLoaded', () => {
+  checkDateReset();
+  initEvents();
   showScreen('today');
 });

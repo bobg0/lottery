@@ -1,0 +1,347 @@
+The app currently has too much UI and still feels like a prototype. Please simplify and redesign it into a minimal, polished, mobile-first habit tracker.
+
+Main design direction:
+- Make the app feel calm, clean, and useful.
+- Do not make it feel like a casino.
+- Reduce the number of visible sections.
+- Remove unnecessary titles, icons, milestones, and extra history.
+- Use bottom tabs as the main navigation.
+- No giant top title. A small date/status header is enough.
+- Use compact cards, large touch buttons, and concise labels.
+- White / near-white background, dark text, one soft blue accent.
+- No gradients, sounds, flashy animations, or external libraries.
+- State must persist in localStorage.
+
+Use only five bottom tabs:
+1. Today
+2. Progress
+3. Rewards
+4. Inventory
+5. Settings
+
+Important simplification:
+Replace separate practice spins and workout spins with one unified spin balance.
+
+Do NOT store separate “practice spins” and “workout spins.”
+Instead:
+- Practice and workout both create 30-minute productive blocks.
+- Each 30-minute productive block adds 1 work token / clip to the shared inventory.
+- A spin directly subtracts from the shared inventory.
+- Show only one computed value: “Spins available.”
+- Spins available = floor(sharedTokens / spinCost).
+- Default spinCost = 3 tokens.
+- Make spinCost editable in Settings.
+- When the user spins, subtract spinCost tokens immediately.
+- Do not maintain a separate spin ledger if it can be computed from inventory.
+
+Today tab:
+Keep this page extremely minimal. No latest reward list. No banked rewards preview.
+
+Show only:
+1. Practice card
+2. Workout card
+3. Spin card
+
+Practice card:
+- Small header: “Practice”
+- Show practice time today in 30-minute blocks.
+- Buttons:
+  +30 min
+  -30 min
+- Each +30 min adds 1 shared token.
+- Each -30 min subtracts 1 practice block and removes 1 shared token if available.
+- If subtracting would make shared tokens negative, block it and show a small warning.
+- Show questions today: X / 10.
+- Buttons:
+  +2 Questions
+  -2 Questions
+- Question count cannot go below 0.
+- Show one clickable status pill:
+  “On pace”
+  “Deficit -2”
+  “Surplus +4”
+- Tapping the pill opens the deficit/progress detail panel.
+
+Workout card:
+- Small header: “Workout”
+- Workout is also counted in 30-minute blocks.
+- Buttons:
+  +30 min
+  -30 min
+- Each +30 min adds 1 shared token.
+- Each -30 min subtracts 1 workout block and removes 1 shared token if available.
+- Weekly workout target = 8 workout blocks, equivalent to about four 60-minute workouts.
+- Show “Workout blocks this week: X / 8.”
+- Do not make workout more complex than this.
+
+Spin card:
+- Show shared tokens available.
+- Show computed spins available.
+- Show spin cost, e.g. “Cost: 3 blocks.”
+- One primary button: Spin.
+- If spins available = 0, disable the button.
+- When Spin is clicked:
+  1. subtract spinCost tokens from shared inventory
+  2. draw a reward from the wheel
+  3. show the result in a temporary modal or bottom sheet
+- Do not leave a persistent “latest reward” card on Today.
+
+Wheel probabilities:
+- T1: 40%
+- T2: 30%
+- T3: 20%
+- Bonus: 8%
+- Jackpot: 2%
+
+Reward conversion:
+All rewards should convert into 30-minute reward blocks.
+
+Default reward values:
+- T1 = 1 reward block = 30 min
+- T2 = 2 reward blocks = 60 min
+- T3 = 3 reward blocks = 90 min
+- Jackpot = 4 reward blocks = 120 min
+- Bonus = show a bonus prompt, but keep it simple
+
+Bonus:
+Keep Bonus simple for now:
+- When Bonus is drawn, show a modal:
+  “Bonus: complete one extra 30-minute block to earn one extra spin.”
+- Buttons:
+  Done
+  Skip
+- Done adds 1 productive token and logs a bonus completion.
+- Skip only logs that bonus was skipped.
+- Do not create a complicated bonus wheel yet.
+
+Reward result modal:
+After a spin, show:
+- Tier
+- Reward text
+- Estimated minutes
+- Number of 30-minute reward blocks earned
+- Buttons:
+  Add to Rewards
+  Discard
+
+Add to Rewards:
+- Add the correct number of 30-minute reward blocks to the Rewards tab.
+- Example: T2 adds two 30-minute blocks.
+- Do not track reward source.
+- Do not show icons for each reward block.
+- Keep it visually simple.
+
+Discard:
+- Confirm first.
+- Log it in history as discarded.
+
+Rewards tab:
+Replace detailed banked reward cards with a simpler reward block system.
+
+Main layout:
+1. Reward balance summary
+2. Reward block grid
+3. Claimed/spent history
+
+Reward balance summary:
+- Reward blocks available: X
+- Reward minutes available: X * 30
+- Spent today
+- Spent this week
+- Weekly cap
+
+Reward block grid:
+- Each available reward block is one square representing 30 minutes.
+- Display the blocks in a clean grid.
+- The square should be simple, no icons needed.
+- Tapping a reward block expands it or opens a small bottom sheet.
+- The expanded view should show:
+  “Spend this 30-minute reward block?”
+  Buttons:
+    Spend
+    Cancel
+- When Spend is clicked:
+  - Remove that reward block from available rewards.
+  - Add 30 minutes to claimed/spent history.
+  - Add spentAt timestamp.
+- This is the main way to subtract/cash out rewards.
+
+Bulk spending:
+- Add a small control:
+  Spend 1 block
+  Spend 2 blocks
+  Spend custom
+- Only allow spending up to the available number of blocks.
+- Spending removes blocks and adds entries to claimed/spent history.
+
+Claimed/spent history:
+- Make this section larger and more useful.
+- Group by date.
+- Show each spend action:
+  timestamp
+  number of blocks spent
+  minutes spent
+- Show daily total.
+- Show weekly total.
+- This history is important for auditing.
+
+Discarded history:
+- Keep it collapsed by default.
+- No need to emphasize it.
+
+Weekly reward cap:
+- Default weekly entertainment cap = 600 minutes.
+- If spending would exceed the cap, show:
+  “This exceeds your weekly reward cap. Spend anyway?”
+- Still allow the user to proceed.
+
+Progress tab:
+Practice progress is the main focus.
+
+Remove:
+- Milestones section.
+- Historical clip count.
+- Any decorative progress badges.
+- Any unnecessary tier/status system.
+
+Keep:
+- Total questions: X / 400
+- Day: X / 40
+- Questions today: X / 10
+- Net deficit/surplus
+- Remaining questions
+- Remaining days
+- Required questions/day from now on
+- Last 3-day average
+- Last 7-day average
+- Daily deficit/surplus chart
+- Workout weekly blocks: X / 8
+
+Deficit/surplus calculation:
+- dailyGoal = 10 questions
+- dailyDelta = todayQuestions - 10
+- expectedQuestionsByToday = min(currentDayNumber * 10, 400)
+- cumulativeDelta = totalQuestionsCompleted - expectedQuestionsByToday
+- surplus carries forward
+- deficit carries forward
+- do not reset surplus daily
+
+Deficit detail panel:
+When the user taps the status pill from Today:
+- Open a compact modal or panel.
+- Show:
+  completed questions
+  expected questions by today
+  net delta
+  remaining questions
+  days remaining
+  required average questions/day
+  last 3-day average
+  last 7-day average
+  daily delta chart
+- Use simple CSS bars only.
+- No external chart library.
+
+Inventory tab:
+Keep this very simple.
+
+Show:
+- Shared productive tokens available
+- Spin cost
+- Computed spins available
+- Practice blocks today
+- Workout blocks today
+- Practice blocks total
+- Workout blocks total
+
+Do not add:
+- historical clip chart
+- complex colored clip inventory
+- tier progression badges
+- milestones
+
+Settings tab:
+Include:
+- Edit spin cost
+- Edit reward texts
+- Edit reward block values for T1/T2/T3/Jackpot
+- Edit weekly reward cap
+- Export backup
+- Import backup
+- Reset app
+
+Reset behavior:
+- When Reset App is clicked, first show a clear warning:
+  “This will clear all app data. A backup will be downloaded before reset.”
+- If the user confirms:
+  1. automatically download a timestamped JSON backup first
+  2. then clear localStorage
+  3. reload the app
+- The backup filename must include date and time so it does not replace previous backups.
+- Example filename:
+  habit-wheel-backup-2026-05-09-1430.json
+
+Export backup:
+- Download all app state as JSON.
+- Filename should be timestamped.
+- Do not overwrite old backups.
+
+Import backup:
+- Allow user to upload JSON backup.
+- Validate basic structure before replacing current state.
+- Ask for confirmation before import.
+
+Data model:
+Simplify the data model if needed.
+
+Use something like:
+state = {
+  startDate,
+  sharedTokens,
+  practiceBlocksByDate,
+  workoutBlocksByDate,
+  questionsByDate,
+  rewardBlocks,
+  spentHistory,
+  discardedHistory,
+  settings
+}
+
+rewardBlocks can be simple:
+[
+  {
+    id,
+    minutes: 30,
+    earnedAt,
+    tier
+  }
+]
+
+spentHistory can be:
+[
+  {
+    id,
+    blocksSpent,
+    minutesSpent,
+    spentAt
+  }
+]
+
+Do not track reward source for now.
+
+Important logic checks:
+- +30 practice adds 1 practice block and 1 shared token.
+- -30 practice removes 1 practice block and 1 shared token if possible.
+- +30 workout adds 1 workout block and 1 shared token.
+- -30 workout removes 1 workout block and 1 shared token if possible.
+- +2 questions increases today and total questions.
+- -2 questions decreases today and total questions, never below 0.
+- Spins available is computed from sharedTokens / spinCost.
+- Spinning subtracts spinCost shared tokens immediately.
+- Reward result adds reward blocks only if user chooses Add to Rewards.
+- Spending reward blocks removes them from available rewards and adds to spent history.
+- Reset automatically exports a backup before clearing data.
+- Refreshing preserves all state.
+
+Final UI goal:
+The final app should look like a polished minimal tracker, not a rough form page. Prioritize spacing, typography, mobile layout, compact cards, bottom tabs, and clear actions. Cut unnecessary details aggressively.

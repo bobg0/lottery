@@ -1,0 +1,108 @@
+Build a minimalist mobile-first PWA for a personal habit reward system.
+
+The app should be called “Habit Wheel”.
+
+Do not use a backend, database server, login, authentication, external APIs, or external CDN assets. Use only HTML, CSS, and JavaScript. Store all data locally in localStorage. Make the app work well on iPhone Safari and as an Add-to-Home-Screen PWA.
+
+The app has only two habits:
+
+1. Practice Questions
+- 1 valid practice block = 25 minutes of focused practice/review.
+- Each valid block earns 1 clip.
+- Every 2 clips allows 1 main wheel spin.
+- No video game/movie reward can be claimed until at least 3 practice blocks are completed that day.
+- Daily checkpoint: 10 questions attempted/reviewed.
+- Weekly checkpoint: 70 questions attempted/reviewed.
+- The user should be able to enter how many questions were completed today.
+
+2. Workout
+- 1 real workout = 1 clip + 1 spin.
+- Weekly target: 4 workouts.
+- A workout should be tracked as completed/not completed for the day.
+
+Main wheel probabilities:
+- Tier 1: 40%
+- Tier 2: 30%
+- Tier 3: 20%
+- Bonus: 8%
+- Jackpot: 2%
+
+Clip system:
+- Use clip inventory per habit.
+- There are 6 normal colors: red, blue, green, yellow, purple, orange.
+- There is also a gold clip.
+- 2 matching normal clips unlock Tier 2.
+- 3 matching normal clips unlock Tier 3.
+- 1 gold clip unlocks Tier 3.
+- Add simple buttons to cash in matching clips.
+
+Rewards:
+Practice rewards:
+- Tier 1: 5–8 min video game or 10 min movie.
+- Tier 2: 15–20 min video game or 20–25 min movie.
+- Tier 3: 35–45 min video game or movie segment.
+- Jackpot: 90 min game/movie block.
+
+Workout rewards:
+- Tier 1: 10 min video game or 15 min movie.
+- Tier 2: 30 min video game or half movie.
+- Tier 3: 60 min video game or full movie if evening.
+- Jackpot: 2 hour game/movie block.
+
+Bonus wheel:
+If the main wheel lands on Bonus, show a bonus section.
+Practice bonus options:
+- 75%: do 2 more questions.
+- 50%: do 1 more question + review.
+- 25%: review one missed question and write the key idea.
+- Free: gain 1 free clip.
+- Extra: spin bonus wheel twice.
+
+Workout bonus options:
+- 75%: 12 extra minutes accessory work.
+- 50%: 8 extra minutes.
+- 25%: 5 extra minutes.
+- Free: gain 1 free clip.
+- Extra: spin bonus wheel twice.
+
+Interface requirements:
+- Minimal, clean, calm, not casino-looking.
+- White or near-white background.
+- Dark text.
+- One accent color.
+- Large buttons.
+- No clutter.
+- No animations except a tiny “spinning...” text delay.
+- No gradients.
+- No background images.
+- No sound.
+- No popups unless necessary.
+
+Screens:
+1. Today screen
+   - Practice block counter
+   - Questions completed today
+   - Workout completed button
+   - Available spins
+   - Main spin button
+   - Latest result
+
+2. Inventory screen
+   - Clip counts for practice
+   - Clip counts for workout
+   - Cash-in buttons
+   - Current unlocked tier
+
+3. Progress screen
+   - Practice: questions completed out of 400
+   - Practice: day count out of 40
+   - Workout: workouts this week out of 4
+   - Simple history list
+
+4. Settings/Backup screen
+   - Edit reward text
+   - Export JSON backup
+   - Import JSON backup
+   - Reset app button with confirmation
+
+Make the UI simple and usable before making it beautiful. Generate all needed files: index.html, style.css, app.js, manifest.json, and service-worker.js.

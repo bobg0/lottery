@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Habit Wheel"
+version = "1.0.0"
+id = "artifacts/habit-wheel"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22183
+
+[services.development]
+run = "pnpm --filter @workspace/habit-wheel run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/habit-wheel", "run", "build" ]
+publicDir = "artifacts/habit-wheel/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22183"
+BASE_PATH = "/"

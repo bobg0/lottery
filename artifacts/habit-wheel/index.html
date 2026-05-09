@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#ffffff" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Habit Wheel" />
+  <meta name="description" content="A personal habit reward system" />
+  <title>Habit Wheel</title>
+  <link rel="manifest" href="manifest.json" />
+  <style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f9f9f8; --surface: #ffffff; --border: #e4e4e2;
+  --text: #1a1a1a; --text-muted: #767672;
+  --accent: #2d6a4f; --accent-light: #d8eddf; --accent-text: #1b4332;
+  --danger: #c0392b; --danger-light: #fdecea;
+  --radius: 10px; --nav-height: 58px;
+}
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; font-size: 16px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+#app { max-width: 520px; margin: 0 auto; padding-bottom: calc(var(--nav-height) + 16px + env(safe-area-inset-bottom)); }
+.screen { display: none; padding: 16px 16px 0; }
+.screen.active { display: block; }
+.screen-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+.screen-title { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+.date-label { font-size: 13px; color: var(--text-muted); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+.card-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 14px; }
+.stat-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.stat-row:last-of-type { border-bottom: none; }
+.stat-name { font-size: 15px; color: var(--text); }
+.stat-val { font-size: 18px; font-weight: 600; color: var(--text); min-width: 32px; text-align: right; }
+.checkpoint-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; margin-bottom: 4px; }
+.checkpoint-text { font-size: 14px; color: var(--text-muted); }
+.checkpoint-badge { font-size: 13px; font-weight: 600; padding: 2px 9px; border-radius: 20px; background: var(--border); color: var(--text-muted); }
+.checkpoint-badge.done { background: var(--accent-light); color: var(--accent-text); }
+.field-group { margin: 12px 0 4px; }
+.field-label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }
+.field-row { display: flex; gap: 8px; }
+.input { flex: 1; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 16px; color: var(--text); background: var(--bg); outline: none; -webkit-appearance: none; }
+.input:focus { border-color: var(--accent); }
+select.input { cursor: pointer; }
+.btn { display: block; width: 100%; padding: 13px 16px; font-size: 15px; font-weight: 600; text-align: center; border: none; border-radius: 8px; cursor: pointer; margin-top: 10px; transition: opacity 0.1s; -webkit-tap-highlight-color: transparent; letter-spacing: 0.1px; }
+.btn:active { opacity: 0.75; }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn-primary { background: var(--text); color: #fff; }
+.btn-accent { background: var(--accent); color: #fff; }
+.btn-ghost { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+.btn-danger { background: var(--danger-light); color: var(--danger); border: 1px solid #f5c6c3; }
+.result-area { margin-top: 12px; padding: 14px; background: var(--bg); border-radius: 8px; border: 1px solid var(--border); font-size: 15px; line-height: 1.6; }
+.result-tier { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 4px; }
+.result-text { font-size: 16px; font-weight: 600; color: var(--text); }
+.clips-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.clip-item { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.clip-dot { width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(0,0,0,0.12); }
+.clip-count { font-size: 13px; font-weight: 600; color: var(--text); }
+.clip-name { font-size: 10px; color: var(--text-muted); text-transform: capitalize; }
+.clip-red { background: #e74c3c; } .clip-blue { background: #3498db; } .clip-green { background: #27ae60; }
+.clip-yellow { background: #f1c40f; } .clip-purple { background: #9b59b6; } .clip-orange { background: #e67e22; }
+.clip-gold { background: linear-gradient(135deg, #f5c518, #c8930a); border-color: #b8860b; }
+.tier-display { font-size: 13px; color: var(--text-muted); margin-bottom: 10px; min-height: 18px; }
+.tier-display.active-tier { color: var(--accent-text); font-weight: 600; }
+.cashin-section { display: flex; flex-direction: column; gap: 6px; }
+.cashin-btn { display: block; width: 100%; padding: 10px 14px; font-size: 14px; font-weight: 500; text-align: left; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; color: var(--text); -webkit-tap-highlight-color: transparent; }
+.cashin-btn:active { opacity: 0.7; }
+.cashin-btn:disabled { opacity: 0.4; cursor: default; }
+.progress-item { margin-bottom: 16px; }
+.progress-meta { display: flex; justify-content: space-between; font-size: 14px; color: var(--text-muted); margin-bottom: 6px; }
+.progress-track { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; border: 1px solid var(--border); }
+.progress-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.3s ease; max-width: 100%; }
+.history-list { display: flex; flex-direction: column; }
+.history-entry { display: flex; justify-content: space-between; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 14px; gap: 12px; }
+.history-entry:last-child { border-bottom: none; }
+.history-date { color: var(--text-muted); font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+.history-detail { color: var(--text); text-align: right; line-height: 1.4; }
+.empty-msg { font-size: 14px; color: var(--text-muted); text-align: center; padding: 16px 0; }
+.reward-fields { display: flex; flex-direction: column; gap: 10px; }
+.reward-field-row { display: flex; flex-direction: column; gap: 4px; }
+.reward-field-label { font-size: 12px; color: var(--text-muted); font-weight: 500; text-transform: capitalize; }
+.reward-input { width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; color: var(--text); background: var(--bg); outline: none; }
+.reward-input:focus { border-color: var(--accent); }
+.bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; height: calc(var(--nav-height) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: stretch; z-index: 100; }
+.nav-btn { flex: 1; border: none; background: transparent; font-size: 12px; font-weight: 500; color: var(--text-muted); cursor: pointer; padding: 0; -webkit-tap-highlight-color: transparent; transition: color 0.15s; }
+.nav-btn.active { color: var(--accent); font-weight: 700; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 999; padding: 20px; }
+.modal-box { background: var(--surface); border-radius: var(--radius); padding: 24px 20px 20px; width: 100%; max-width: 340px; }
+.modal-msg { font-size: 15px; color: var(--text); margin-bottom: 20px; line-height: 1.5; }
+.modal-actions { display: flex; gap: 8px; }
+.modal-actions .btn { flex: 1; margin-top: 0; }
+.hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="app">
+
+    <!-- TODAY SCREEN -->
+    <section id="screen-today" class="screen active">
+      <header class="screen-header">
+        <h1 class="screen-title">Today</h1>
+        <span class="date-label" id="today-date"></span>
+      </header>
+
+      <div class="card">
+        <div class="card-label">Practice</div>
+        <div class="stat-row">
+          <span class="stat-name">Blocks logged</span>
+          <span class="stat-val" id="stat-blocks">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-name">Practice spins available</span>
+          <span class="stat-val" id="stat-practice-spins">0</span>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="questions-input">Questions completed today</label>
+          <div class="field-row">
+            <input class="input" type="number" id="questions-input" min="0" max="9999" placeholder="0" />
+            <button class="btn btn-ghost" id="save-questions-btn" style="margin-top:0;flex:0 0 auto;padding:10px 14px;">Save</button>
+          </div>
+        </div>
+        <div class="stat-row">
+          <span class="stat-name">Questions today</span>
+          <span class="stat-val" id="stat-questions">0</span>
+        </div>
+        <div class="checkpoint-row">
+          <span class="checkpoint-text">Daily goal: 10 questions</span>
+          <span class="checkpoint-badge" id="daily-checkpoint-badge">0/10</span>
+        </div>
+        <button class="btn btn-primary" id="log-block-btn">+ Log 25-min Practice Block</button>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Workout</div>
+        <div class="stat-row">
+          <span class="stat-name">Workout spins available</span>
+          <span class="stat-val" id="stat-workout-spins">0</span>
+        </div>
+        <button class="btn btn-primary" id="workout-btn">Mark Workout Done</button>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Spin</div>
+        <div class="stat-row">
+          <span class="stat-name">Total spins available</span>
+          <span class="stat-val" id="stat-total-spins">0</span>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Spin type</label>
+          <select class="input" id="spin-type-select" style="margin-top:0;">
+            <option value="practice">Practice</option>
+            <option value="workout">Workout</option>
+          </select>
+        </div>
+        <button class="btn btn-accent" id="spin-btn">Spin the Wheel</button>
+        <div id="spin-result-area" class="result-area hidden"></div>
+      </div>
+
+      <div class="card hidden" id="bonus-card" style="display:none">
+        <div class="card-label">Bonus Wheel</div>
+        <div id="bonus-result-area" class="result-area"></div>
+        <button class="btn btn-ghost" id="spin-bonus-btn">Spin Bonus Wheel</button>
+      </div>
+    </section>
+
+    <!-- INVENTORY SCREEN -->
+    <section id="screen-inventory" class="screen" style="display:none">
+      <header class="screen-header">
+        <h1 class="screen-title">Inventory</h1>
+      </header>
+      <div class="card">
+        <div class="card-label">Practice Clips</div>
+        <div id="practice-clips-grid" class="clips-grid"></div>
+        <div class="tier-display" id="practice-tier-display"></div>
+        <div id="practice-cashin-section" class="cashin-section"></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Workout Clips</div>
+        <div id="workout-clips-grid" class="clips-grid"></div>
+        <div class="tier-display" id="workout-tier-display"></div>
+        <div id="workout-cashin-section" class="cashin-section"></div>
+      </div>
+    </section>
+
+    <!-- PROGRESS SCREEN -->
+    <section id="screen-progress" class="screen" style="display:none">
+      <header class="screen-header">
+        <h1 class="screen-title">Progress</h1>
+      </header>
+      <div class="card">
+        <div class="card-label">Practice</div>
+        <div class="progress-item">
+          <div class="progress-meta">
+            <span>Questions (lifetime)</span>
+            <span id="prog-questions-label">0 / 400</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="prog-questions-bar" style="width:0%"></div>
+          </div>
+        </div>
+        <div class="progress-item">
+          <div class="progress-meta">
+            <span>Practice days</span>
+            <span id="prog-days-label">0 / 40</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="prog-days-bar" style="width:0%"></div>
+          </div>
+        </div>
+        <div class="stat-row">
+          <span class="stat-name">Questions this week</span>
+          <span class="stat-val" id="prog-week-questions">0 / 70</span>
+        </div>
+        <div class="checkpoint-row">
+          <span class="checkpoint-text">Weekly goal: 70 questions</span>
+          <span class="checkpoint-badge" id="weekly-checkpoint-badge">0/70</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-label">Workout</div>
+        <div class="progress-item">
+          <div class="progress-meta">
+            <span>Workouts this week</span>
+            <span id="prog-workouts-label">0 / 4</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="prog-workouts-bar" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-label">History</div>
+        <div id="history-list" class="history-list">
+          <p class="empty-msg">No history yet.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SETTINGS SCREEN -->
+    <section id="screen-settings" class="screen" style="display:none">
+      <header class="screen-header">
+        <h1 class="screen-title">Settings</h1>
+      </header>
+      <div class="card">
+        <div class="card-label">Practice Rewards</div>
+        <div id="practice-reward-fields" class="reward-fields"></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Workout Rewards</div>
+        <div id="workout-reward-fields" class="reward-fields"></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Save Changes</div>
+        <button class="btn btn-primary" id="save-rewards-btn">Save Reward Text</button>
+      </div>
+      <div class="card">
+        <div class="card-label">Data</div>
+        <button class="btn btn-ghost" id="export-btn">Export JSON Backup</button>
+        <label class="btn btn-ghost" for="import-file-input" style="display:block;text-align:center;cursor:pointer;">Import JSON Backup</label>
+        <input type="file" id="import-file-input" accept=".json" style="display:none" />
+        <button class="btn btn-danger" id="reset-btn">Reset All Data</button>
+      </div>
+    </section>
+
+    <!-- BOTTOM NAV -->
+    <nav class="bottom-nav">
+      <button class="nav-btn active" data-screen="today">Today</button>
+      <button class="nav-btn" data-screen="inventory">Inventory</button>
+      <button class="nav-btn" data-screen="progress">Progress</button>
+      <button class="nav-btn" data-screen="settings">Settings</button>
+    </nav>
+  </div>
+
+  <!-- Confirm Modal -->
+  <div id="confirm-overlay" class="modal-overlay hidden">
+    <div class="modal-box">
+      <p id="confirm-msg" class="modal-msg"></p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="confirm-no">Cancel</button>
+        <button class="btn btn-danger" id="confirm-yes">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('service-worker.js').catch(function(){});
+    }
+  </script>
+</body>
+</html>

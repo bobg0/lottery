@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#ffffff" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Habit Wheel" />
+  <title>Habit Wheel</title>
+  <link rel="manifest" href="manifest.json" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #f1f5f9;
+      --surface: #fff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --accent-lt: #eff6ff;
+      --danger: #dc2626;
+      --warn-bg: #fff8f0;
+      --warn-border: #d97706;
+      --good-bg: #f0fdf4;
+      --safe: env(safe-area-inset-bottom, 0px);
+    }
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+    #app { max-width: 430px; min-height: 100vh; margin: 0 auto; padding-bottom: calc(var(--safe) + 16px); }
+    .screen { display: none; }
+    .screen.active { display: block; }
+    .hidden { display: none !important; }
+
+    .app-header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 6px;
+      background: var(--bg);
+    }
+    .header-date {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 500;
+      padding: 4px 0;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .header-actions { display: flex; align-items: center; gap: 10px; }
+    .header-icon {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      padding: 4px;
+      line-height: 0;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .header-icon svg { width: 20px; height: 20px; stroke-width: 2; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      margin: 0 12px 10px;
+      padding: 14px 16px;
+    }
+    .card-heading { font-size: 16px; font-weight: 700; }
+    .card-head-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .card-label, .card-label-summary {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .card-label-summary { cursor: pointer; list-style: none; }
+    .card-label-summary::-webkit-details-marker { display: none; }
+    .card-label-summary::marker { display: none; }
+    .info-card { font-size: 13px; color: var(--muted); text-align: center; padding: 10px 16px; }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 0;
+      font-size: 15px;
+      border-bottom: 1px solid var(--border);
+    }
+    .stat-row.nb { border-bottom: none; }
+    .stat-sep { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
+    .stat-row strong { text-align: right; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: 10px;
+      min-height: 48px;
+      padding: 0 14px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn:active { opacity: 0.8; }
+    .btn:disabled { opacity: 0.38; cursor: default; }
+    .btn-solid { background: var(--accent); color: #fff; }
+    .btn-outline { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+    .btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+    .btn-full { width: 100%; }
+    .btn-pair, .btn-trio, .bag-inputs { display: flex; gap: 8px; }
+    .btn-pair .btn, .btn-trio .btn { flex: 1; }
+    .btn-trio .btn { font-size: 14px; min-height: 44px; }
+    .mt8 { margin-top: 8px; }
+    .mt12 { margin-top: 12px; }
+    .mt16 { margin-top: 16px; }
+
+    .status-pill {
+      border: 0;
+      border-radius: 20px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .pill-pace { background: #f0fdf4; color: #15803d; }
+    .pill-deficit { background: #fef2f2; color: #b91c1c; }
+    .pill-surplus { background: var(--accent-lt); color: var(--accent); }
+
+    .clip-bar-row {
+      display: grid;
+      grid-template-columns: 58px 1fr 24px;
+      align-items: center;
+      gap: 8px;
+      margin: 7px 0;
+      padding: 3px 4px;
+      border-radius: 8px;
+    }
+    .clip-bar-row.last-drawn { background: #eff6ff; box-shadow: inset 0 0 0 1px #bfdbfe; }
+    .clip-bar-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+    .clip-bar-track { height: 9px; background: var(--bg); border-radius: 999px; overflow: hidden; }
+    .clip-bar-fill { height: 100%; border-radius: 999px; }
+    .clip-bar-count { font-size: 12px; text-align: right; }
+    .clip-tone-0 { background: #1e3a5f; }
+    .clip-tone-1 { background: #28507d; }
+    .clip-tone-2 { background: #356899; }
+    .clip-tone-3 { background: #4b82b3; }
+    .clip-tone-4 { background: #6c9cc7; }
+    .clip-tone-5 { background: #93b7d8; }
+
+    .metric-box { background: var(--bg); border-radius: 10px; padding: 10px 6px; text-align: center; }
+    .metric-v { font-size: 12px; font-weight: 700; line-height: 1.2; }
+    .metric-k { font-size: 9px; color: var(--muted); margin-top: 3px; text-transform: uppercase; letter-spacing: 0.3px; }
+    .metric-v.neg { color: var(--danger); }
+    .metric-v.pos { color: var(--accent); }
+    .progress-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-bottom: 7px; }
+    .progress-metrics:last-child { margin-bottom: 0; }
+    .progress-range { display: flex; gap: 6px; background: var(--bg); border-radius: 10px; padding: 4px; margin-bottom: 12px; }
+    .range-btn {
+      flex: 1;
+      min-height: 36px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .range-btn.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 2px rgba(15,23,42,0.08); }
+    .time-chart-grid { display: grid; grid-template-columns: 30px 1fr; gap: 8px; align-items: stretch; }
+    .time-y-axis { height: 78px; display: flex; flex-direction: column; justify-content: space-between; font-size: 10px; color: var(--muted); text-align: right; padding-top: 1px; }
+    .bar-chart { display: flex; align-items: flex-end; gap: 2px; height: 78px; margin: 0 0 4px; overflow: hidden; border-bottom: 1px solid var(--border); }
+    .bar-col { flex: 1 1 12px; max-width: 28px; height: 100%; display: flex; align-items: flex-end; }
+    .bar-fill { width: 100%; min-height: 2px; border-radius: 2px 2px 0 0; }
+    .bar-fill.practice { background: #3f6f99; }
+    .bar-fill.workout { background: #6f91b2; }
+    .bar-fill.reward-spent { background: #2563eb; }
+    .reward-block.empty { background: transparent; border: 2px solid var(--border); cursor: default; }
+    .reward-block.empty:hover { background: transparent; }
+    .vchart-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+    .rew-summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+    .rew-stat { background: var(--bg); border-radius: 8px; padding: 8px 5px; text-align: center; }
+    .rew-stat-val { font-size: 15px; font-weight: 700; }
+    .rew-stat-key { font-size: 9px; color: var(--muted); margin-top: 2px; line-height: 1.2; }
+    .block-grid {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: calc((100% - 42px) / 8);
+      gap: 6px;
+      min-height: 20px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .block-grid .empty-state { grid-column: 1 / -1; }
+    .reward-block {
+      width: 100%;
+      aspect-ratio: 1;
+      border-radius: 8px;
+      background: var(--accent);
+      border: 2px solid transparent;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .reward-block.selected { background: #1d4ed8; border-color: #bfdbfe; box-shadow: 0 0 0 2px #eff6ff; }
+    .reward-block:active { opacity: 0.75; }
+
+    .spinner-container { width: 100%; }
+    .spinner-frame {
+      position: relative;
+      width: 100%;
+      height: 100px;
+      margin: 0 auto;
+      overflow: hidden;
+      border-radius: 12px;
+      border: 2px solid #08111F;
+      background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
+      box-shadow: inset 0 1px 4px rgba(15, 23, 42, 0.18);
+    }
+    .spinner-track {
+      display: flex;
+      gap: 6px;
+      height: 100%;
+      align-items: stretch;
+      padding: 6px 0;
+      will-change: transform;
+    }
+    .spin-tile {
+      flex: 0 0 96px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      border: 2px solid #0B1624;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0.4px;
+      text-align: center;
+      padding: 0 6px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+    }
+    .spinner-pointer {
+      position: absolute;
+      top: -6px;
+      bottom: -6px;
+      left: 50%;
+      width: 3px;
+      background: #B89B63;
+      border-left: 1px solid #08111F;
+      border-right: 1px solid #08111F;
+      transform: translateX(-50%);
+      pointer-events: none;
+    }
+    .spinner-pointer::before,
+    .spinner-pointer::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      width: 0;
+      height: 0;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      transform: translateX(-50%);
+    }
+    .spinner-pointer::before {
+      top: -10px;
+      border-top: 10px solid #B89B63;
+    }
+    .spinner-pointer::after {
+      bottom: -10px;
+      border-bottom: 10px solid #B89B63;
+    }
+
+    .spin-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 998;
+      display: block;
+      padding: 0;
+      padding-bottom: max(0px, var(--safe));
+      background: rgba(15, 23, 42, 0.42);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      -webkit-tap-highlight-color: transparent;
+      pointer-events: none;
+    }
+    .spin-overlay.hidden { display: none !important; }
+    /* Narrower than main stack; position (bottom anchor) set in JS. */
+    .spin-overlay-inner {
+      width: calc(100% - 24px);
+      max-width: 372px;
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      pointer-events: auto;
+    }
+    .spin-overlay-card {
+      width: 100%;
+      border-radius: 12px;
+      padding: 8px 10px;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(226, 232, 240, 0.85);
+      box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .spin-overlay-card .spinner-frame {
+      height: 46px;
+      margin: 0 auto;
+      background: linear-gradient(180deg, rgba(248, 250, 252, 0.82) 0%, rgba(226, 232, 240, 0.82) 100%);
+      border-color: rgba(8, 17, 31, 0.65);
+    }
+    .spin-overlay-card .spinner-track {
+      padding: 2px 0;
+      gap: 6px;
+    }
+    .spin-overlay-card .spin-tile {
+      opacity: 0.72;
+      flex: 0 0 calc((100% - 30px) / 6);
+      width: calc((100% - 30px) / 6);
+      max-width: calc((100% - 30px) / 6);
+      min-width: 0;
+      min-height: 0;
+      box-sizing: border-box;
+      font-size: 9px;
+      letter-spacing: 0.02em;
+      padding: 0 2px;
+      border-radius: 8px;
+      border-width: 1px;
+      line-height: 1.15;
+    }
+    .spin-overlay-card .spin-tile span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+    .spin-overlay-result-slot {
+      min-height: 72px;
+      margin-top: 8px;
+      padding-top: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+    .spin-overlay-reward {
+      width: 100%;
+      text-align: center;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.35;
+      min-height: 1.35em;
+    }
+    .spin-overlay-reward .spin-reward-main { margin: 0; }
+    .spin-overlay-reward .spin-reward-sub {
+      margin-top: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .spin-overlay-reward.reward-tier-0 .spin-reward-main { font-size: 15px; }
+    .spin-overlay-reward.reward-tier-1 .spin-reward-main { font-size: 17px; }
+    .spin-overlay-reward.reward-tier-2 .spin-reward-main { font-size: 22px; }
+    .spin-overlay-reward.reward-tier-3 .spin-reward-main { font-size: 27px; }
+
+    .hist-group { margin-bottom: 16px; }
+    .hist-group:last-child { margin-bottom: 0; }
+    .hist-date { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 6px; }
+    .hist-entry { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; gap: 12px; }
+    .hist-entry:last-child { border-bottom: none; }
+    .hist-time { color: var(--muted); font-size: 13px; flex-shrink: 0; }
+    .hist-val { font-weight: 600; text-align: right; }
+    .hist-daily-total { font-size: 12px; color: var(--muted); padding-top: 6px; text-align: right; }
+
+    .settings-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 0;
+      font-size: 15px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      border-bottom: 1px solid var(--border);
+    }
+    .settings-row:last-child, .settings-row.nb { border-bottom: none; }
+    .settings-row:active { opacity: 0.7; }
+    .settings-row-r { display: flex; align-items: center; gap: 8px; }
+    .settings-sub, .s-muted { color: var(--muted); font-size: 14px; }
+    .settings-sub { font-size: 12px; margin-top: 2px; }
+    .settings-row.danger { color: var(--danger); }
+    .s-chevron { color: var(--muted); font-size: 20px; line-height: 1; }
+
+    .sheet-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      background: rgba(0,0,0,0.4);
+      padding-bottom: var(--safe);
+    }
+    .sheet-box {
+      width: 100%;
+      max-width: 430px;
+      max-height: 88vh;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      background: var(--surface);
+      border-radius: 16px 16px 0 0;
+    }
+    .sheet-handle { width: 36px; height: 4px; background: var(--border); border-radius: 2px; margin: 12px auto 4px; }
+    .sheet-header {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .sheet-title { font-size: 16px; font-weight: 700; }
+    .sheet-title-lg { font-size: 17px; font-weight: 600; line-height: 1.4; }
+    .sheet-close { background: none; border: none; font-size: 14px; font-weight: 600; color: var(--accent); cursor: pointer; }
+    .sheet-body { padding: 16px 20px 28px; }
+    .spin-tier { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); text-align: center; margin-bottom: 10px; }
+    .spin-blocks { font-size: 28px; font-weight: 700; text-align: center; line-height: 1.1; }
+    .spin-mins { font-size: 16px; color: var(--muted); text-align: center; margin-bottom: 4px; }
+    .spin-text { font-size: 15px; color: var(--text); text-align: center; margin: 8px 0 0; }
+    .bonus-note { font-size: 13px; color: var(--muted); padding: 6px 0; border-bottom: 1px solid var(--border); }
+
+    .form-group { margin-bottom: 16px; }
+    .form-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 6px;
+    }
+    .form-input {
+      width: 100%;
+      padding: 12px;
+      font-size: 15px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg);
+      color: var(--text);
+      outline: none;
+      -webkit-appearance: none;
+    }
+    .form-input:focus { border-color: var(--accent); }
+    .bag-inputs .form-input { flex: 1; }
+    .rew-tier-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
+    .rew-tier-row:last-of-type { border-bottom: none; }
+    .rew-tier-lbl { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 7px; }
+    .rew-tier-inputs { display: flex; gap: 8px; }
+    .rew-tier-inputs .form-input:first-child { flex: 1; }
+    .rew-tier-inputs .form-input:last-child { width: 66px; }
+
+    .def-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+    .def-card { background: var(--bg); border-radius: 8px; padding: 10px 12px; }
+    .def-card-v { font-size: 18px; font-weight: 700; }
+    .def-card-v.neg, .dchart-val.neg { color: var(--danger); }
+    .def-card-v.pos, .dchart-val.pos { color: var(--accent); }
+    .def-card-k { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .def-pace-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+    .def-pace-row:last-child { border-bottom: none; }
+    .def-pace-v { font-weight: 700; }
+    .def-sec { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin: 16px 0 10px; }
+    .def-rec { border-radius: 8px; padding: 12px 14px; font-size: 14px; line-height: 1.65; background: var(--bg); }
+    .def-rec.good { background: var(--good-bg); }
+    .def-rec.warn { background: var(--warn-bg); border-left: 3px solid var(--warn-border); }
+    .dchart-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+    .dchart-date { font-size: 11px; color: var(--muted); width: 38px; flex-shrink: 0; text-align: right; }
+    .dchart-wrap { flex: 1; height: 16px; position: relative; }
+    .dchart-axis { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--border); }
+    .dchart-bar { position: absolute; top: 2px; bottom: 2px; border-radius: 2px; min-width: 2px; }
+    .dchart-pos { left: calc(50% + 1px); background: var(--accent); }
+    .dchart-neg { right: 50%; background: #bfdbfe; }
+    .dchart-val { font-size: 11px; font-weight: 600; width: 26px; flex-shrink: 0; }
+    .empty-state { font-size: 14px; color: var(--muted); padding: 12px 0; text-align: center; }
+    .warn-note { font-size: 13px; color: var(--warn-border); margin-top: 8px; }
+  </style>
+  <script type="module" crossorigin src="/lottery/assets/index-CQOLcUf1.js"></script>
+</head>
+<body>
+<div id="app">
+  <header class="app-header">
+    <button class="header-date" id="today-date"></button>
+    <div class="header-actions">
+      <button class="header-icon" id="top-progress-btn" aria-label="Progress">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M8 15v-4"></path><path d="M12 15V8"></path><path d="M16 15v-6"></path></svg>
+      </button>
+      <button class="header-icon" id="top-rewards-btn" aria-label="Rewards">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7"></path><path d="M2 7h20v5H2z"></path><path d="M12 22V7"></path><path d="M12 7H7.5A2.5 2.5 0 1 1 10 4.5L12 7Z"></path><path d="M12 7h4.5A2.5 2.5 0 1 0 14 4.5L12 7Z"></path></svg>
+      </button>
+      <button class="header-icon" id="top-settings-btn" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3 14H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1A1.7 1.7 0 0 0 10 3V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1A1.7 1.7 0 0 0 21 10h.1a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6 1Z"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <section id="screen-today" class="screen active">
+    <div class="card">
+      <div class="card-head-row">
+        <span class="card-heading">Practice</span>
+        <button class="status-pill pill-pace" id="practice-status-pill">On pace</button>
+      </div>
+      <div class="stat-row"><span>Blocks today</span><strong id="practice-blocks-today">0</strong></div>
+      <div class="btn-pair mt12">
+        <button class="btn btn-outline" id="practice-minus">-30 min</button>
+        <button class="btn btn-solid" id="practice-plus">+30 min</button>
+      </div>
+      <div class="stat-row stat-sep"><span>Questions today</span><strong><span id="q-today">0</span> / 10</strong></div>
+      <div class="btn-pair mt12">
+        <button class="btn btn-outline" id="q-minus2">-2</button>
+        <button class="btn btn-outline" id="q-plus2">+2</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-heading" style="margin-bottom:12px">Workout</div>
+      <div class="stat-row"><span>This week</span><strong><span id="workout-week">0</span> / 8 blocks</strong></div>
+      <div class="btn-pair mt12">
+        <button class="btn btn-outline" id="workout-minus">-30 min</button>
+        <button class="btn btn-solid" id="workout-plus">+30 min</button>
+      </div>
+    </div>
+
+    <div class="card" id="today-paperclips-card">
+      <div class="card-heading" style="margin-bottom:12px">Paperclips</div>
+      <div id="today-clip-summary"></div>
+      <div class="btn-trio mt12">
+        <button class="btn btn-outline" id="tier1-spin-btn">Tier 1</button>
+        <button class="btn btn-outline" id="tier2-spin-btn">Tier 2</button>
+        <button class="btn btn-outline" id="tier3-spin-btn">Tier 3</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="screen-progress" class="screen" style="display:none">
+    <div class="card">
+      <div class="progress-metrics">
+        <div class="metric-box"><div class="metric-v" id="prog-q">0 / 400</div><div class="metric-k">Total Qs</div></div>
+        <div class="metric-box"><div class="metric-v" id="prog-day">1 / 40</div><div class="metric-k">Day</div></div>
+        <div class="metric-box"><div class="metric-v" id="prog-net">0</div><div class="metric-k">Net</div></div>
+      </div>
+      <div class="progress-metrics progress-summary">
+        <div class="metric-box"><div class="metric-v" id="range-practice-time">0h</div><div class="metric-k">Practice</div></div>
+        <div class="metric-box"><div class="metric-v" id="range-workout-time">0h</div><div class="metric-k">Workout</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="progress-range" aria-label="Progress range">
+        <button class="range-btn active" data-progress-range="week">Week</button>
+        <button class="range-btn" data-progress-range="month">Month</button>
+        <button class="range-btn" data-progress-range="ytd">YTD</button>
+      </div>
+      <div class="card-label mt12">Practice</div>
+      <div class="time-chart-grid">
+        <div class="time-y-axis" id="practice-y-axis"></div>
+        <div class="bar-chart" id="practice-time-chart"></div>
+      </div>
+      <div class="vchart-labels"><span id="practice-chart-start">Start</span><span>Today</span></div>
+      <div class="card-label mt16">Workout</div>
+      <div class="time-chart-grid">
+        <div class="time-y-axis" id="workout-y-axis"></div>
+        <div class="bar-chart" id="workout-time-chart"></div>
+      </div>
+      <div class="vchart-labels"><span id="workout-chart-start">Start</span><span>Today</span></div>
+    </div>
+  </section>
+
+  <section id="screen-rewards" class="screen" style="display:none">
+    <div class="card">
+      <div class="card-label">Reward blocks (30 min each)</div>
+      <div class="block-grid" id="reward-block-grid"><p class="empty-state" style="width:100%">No reward blocks yet. Spin to earn some.</p></div>
+      <button class="btn btn-solid btn-full mt12" id="spend-selected-btn" disabled>Spend selected</button>
+    </div>
+    <div class="card">
+      <div class="card-label">Reward spent</div>
+      <div class="time-chart-grid">
+        <div class="time-y-axis" id="reward-spent-y-axis"></div>
+        <div class="bar-chart" id="reward-spent-time-chart"></div>
+      </div>
+      <div class="vchart-labels"><span id="reward-spent-chart-start">Start</span><span>Today</span></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Claimed / Spent History</div>
+      <div id="spent-history-list"><p class="empty-state">No history yet.</p></div>
+    </div>
+    <details class="card">
+      <summary class="card-label-summary">Discarded History</summary>
+      <div id="discarded-history-list" style="margin-top:10px"><p class="empty-state">None discarded.</p></div>
+    </details>
+  </section>
+
+  <section id="screen-settings" class="screen" style="display:none">
+    <div class="card">
+      <div class="settings-row" id="set-blocks-per-spin"><span>Blocks per spin</span><div class="settings-row-r"><span class="s-muted" id="set-blocks-per-spin-val">3 blocks</span><span class="s-chevron">›</span></div></div>
+      <div class="settings-row" id="set-clip-bag"><span>Clip bag settings</span><div class="settings-row-r"><span class="s-muted" id="set-clip-bag-val">4 normal, 2 gold</span><span class="s-chevron">›</span></div></div>
+      <div class="settings-row" id="set-rewards"><span>Reward block values</span><div class="settings-row-r"><span class="s-chevron">›</span></div></div>
+      <div class="settings-row nb" id="set-cap"><span>Weekly reward cap</span><div class="settings-row-r"><span class="s-muted" id="set-cap-val">600 min</span><span class="s-chevron">›</span></div></div>
+    </div>
+    <div class="card">
+      <div class="settings-row" id="set-export"><span>Export backup</span><span class="s-chevron">›</span></div>
+      <div class="settings-row" id="set-import"><span>Import backup</span><span class="s-chevron">›</span></div>
+      <input type="file" id="import-file-input" accept=".json" style="display:none" />
+      <div class="settings-row nb danger" id="set-reset"><div><div>Reset app</div><div class="settings-sub">Downloads a timestamped backup first.</div></div><span class="s-chevron">›</span></div>
+    </div>
+    <div class="info-card card">Data is stored locally on this device.</div>
+  </section>
+</div>
+
+<!-- Spin result: overlay on Today; tap anywhere after spin to apply reward & dismiss. -->
+
+<div id="spin-overlay" class="spin-overlay hidden" aria-hidden="true">
+  <div class="spin-overlay-inner">
+    <div class="spin-overlay-card">
+      <div id="spin-overlay-strip" class="spinner-container"></div>
+      <div class="spin-overlay-result-slot">
+        <div id="spin-overlay-reward" class="spin-overlay-reward" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="bonus-sheet" class="sheet-overlay hidden">
+  <div class="sheet-box"><div class="sheet-handle"></div><div class="sheet-body" id="bonus-body"></div></div>
+</div>
+
+<div id="deficit-sheet" class="sheet-overlay hidden">
+  <div class="sheet-box"><div class="sheet-handle"></div><div class="sheet-header"><span class="sheet-title">Question Tracking</span><button class="sheet-close" data-close="deficit-sheet">Done</button></div><div class="sheet-body" id="deficit-body"></div></div>
+</div>
+
+<div id="blocks-per-spin-sheet" class="sheet-overlay hidden">
+  <div class="sheet-box"><div class="sheet-handle"></div><div class="sheet-header"><span class="sheet-title">Blocks per spin</span><button class="sheet-close" data-close="blocks-per-spin-sheet">Cancel</button></div><div class="sheet-body">
+    <div class="form-group"><label class="form-label">Productive blocks required per spin</label><input class="form-input" type="number" id="blocks-per-spin-input" min="1" max="20" inputmode="numeric" /></div>
+    <button class="btn btn-solid btn-full" id="blocks-per-spin-save">Save</button>
+  </div></div>
+</div>
+
+<div id="clip-bag-sheet" class="sheet-overlay hidden">
+  <div class="sheet-box"><div class="sheet-handle"></div><div class="sheet-header"><span class="sheet-title">Clip bag settings</span><button class="sheet-close" data-close="clip-bag-sheet">Cancel</button></div><div class="sheet-body">
+    <div class="form-group">
+      <label class="form-label">Clips per bag</label>
+      <div class="bag-inputs"><input class="form-input" type="number" id="clip-bag-red" min="0" inputmode="numeric" placeholder="Red" /><input class="form-input" type="number" id="clip-bag-blue" min="0" inputmode="numeric" placeholder="Blue" /></div>
+      <div class="bag-inputs mt8"><input class="form-input" type="number" id="clip-bag-green" min="0" inputmode="numeric" placeholder="Green" /><input class="form-input" type="number" id="clip-bag-purple" min="0" inputmode="numeric" placeholder="Purple" /></div>
+      <div class="bag-inputs mt8"><input class="form-input" type="number" id="clip-bag-orange" min="0" inputmode="numeric" placeholder="Orange" /><input class="form-input" type="number" id="clip-bag-gold" min="0" inputmode="numeric" placeholder="Gold" /></div>
+    </div>
+    <div class="form-group"><label class="form-label">Draw mode</label><select class="form-input" id="draw-mode-input"><option value="bag">Finite bag</option><option value="probability">Probability</option></select></div>
+    <button class="btn btn-solid btn-full" id="clip-bag-save">Save</button>
+  </div></div>
+</div>
+
+<div id="rewards-settings-sheet" class="sheet-overlay hidden">
+  <div class="sheet-box"><div class="sheet-handle"></div><div class="sheet-header"><span class="sheet-title">Reward block values</span><button class="sheet-close" data-close="rewards-settings-sheet">Cancel</button></div><div class="sheet-body" id="rewards-settings-body"></div></div>
+</div>
+
+<div id="cap-sheet" class="sheet-overlay hidden">
+  <div class="sheet-box"><div class="sheet-handle"></div><div class="sheet-header"><span class="sheet-title">Weekly reward cap</span><button class="sheet-close" data-close="cap-sheet">Cancel</button></div><div class="sheet-body">
+    <div class="form-group"><label class="form-label">Maximum entertainment minutes per week</label><input class="form-input" type="number" id="cap-input" min="30" inputmode="numeric" /></div>
+    <button class="btn btn-solid btn-full" id="cap-save">Save</button>
+  </div></div>
+</div>
+
+<div id="confirm-sheet" class="sheet-overlay hidden">
+  <div class="sheet-box"><div class="sheet-handle"></div><div class="sheet-body">
+    <div class="sheet-title-lg" id="confirm-msg">Are you sure?</div>
+    <div class="btn-pair mt16"><button class="btn btn-outline" id="confirm-cancel">Cancel</button><button class="btn btn-danger" id="confirm-ok">Confirm</button></div>
+  </div></div>
+</div>
+
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./service-worker.js').catch(function(){});
+  }
+</script>
+</body>
+</html>

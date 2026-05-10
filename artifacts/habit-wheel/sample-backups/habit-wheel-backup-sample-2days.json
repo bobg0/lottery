@@ -1,0 +1,126 @@
+{
+  "startDate": "2026-05-08",
+  "lastDate": "2026-05-09",
+  "weekStart": "2026-05-05",
+  "clipInventory": {
+    "red": 2,
+    "blue": 1,
+    "green": 0,
+    "purple": 0,
+    "orange": 0,
+    "gold": 1
+  },
+  "clipBag": {
+    "mode": "bag",
+    "remaining": ["red", "blue", "green"],
+    "template": {
+      "red": 4,
+      "blue": 4,
+      "green": 4,
+      "purple": 4,
+      "orange": 4,
+      "gold": 2
+    }
+  },
+  "lastClipDrawn": "gold",
+  "pendingSpins": 1,
+  "blocksTowardNextSpin": 1,
+  "clipDrawsByDate": {
+    "2026-05-08": [
+      {
+        "id": 12,
+        "kind": "practice",
+        "date": "2026-05-08",
+        "clip": "red",
+        "createdAt": "2026-05-08T14:10:00.000Z"
+      }
+    ],
+    "2026-05-09": [
+      {
+        "id": 13,
+        "kind": "workout",
+        "date": "2026-05-09",
+        "clip": "gold",
+        "createdAt": "2026-05-09T09:45:00.000Z"
+      }
+    ]
+  },
+  "practiceByDate": {
+    "2026-05-08": 2,
+    "2026-05-09": 1
+  },
+  "workoutByDate": {
+    "2026-05-08": 1,
+    "2026-05-09": 1
+  },
+  "questionsByDate": {
+    "2026-05-08": 8,
+    "2026-05-09": 10
+  },
+  "totalPracticeBlocks": 10,
+  "totalWorkoutBlocks": 6,
+  "totalQuestions": 112,
+  "rewardBlocks": [
+    {
+      "id": 21,
+      "minutes": 30,
+      "earnedAt": "2026-05-09T10:30:00.000Z",
+      "sourceTier": "tier1",
+      "wheelOutcome": "tier1",
+      "activeTier": 1
+    }
+  ],
+  "spentHistory": [
+    {
+      "id": 31,
+      "blocksSpent": 1,
+      "minutesSpent": 30,
+      "spentAt": "2026-05-09T12:05:00.000Z"
+    }
+  ],
+  "discardedHistory": [
+    {
+      "id": 41,
+      "tier": "tier2",
+      "rewardText": "60-minute reward block",
+      "discardedAt": "2026-05-08T16:20:00.000Z"
+    }
+  ],
+  "bonusHistory": [
+    {
+      "id": 51,
+      "outcome": "75",
+      "status": "completed",
+      "completedAt": "2026-05-09T11:00:00.000Z"
+    }
+  ],
+  "nextId": 60,
+  "schemaVersion": 3,
+  "settings": {
+    "blocksPerSpin": 3,
+    "drawMode": "bag",
+    "weeklyRewardCapMinutes": 600,
+    "rewards": {
+      "tier1": {
+        "text": "30-minute reward block",
+        "blocks": 1
+      },
+      "tier2": {
+        "text": "60-minute reward block",
+        "blocks": 2
+      },
+      "tier3": {
+        "text": "90-minute reward block",
+        "blocks": 3
+      },
+      "jackpot": {
+        "text": "120-minute reward block",
+        "blocks": 4
+      },
+      "bonus": {
+        "text": "Bonus challenge",
+        "blocks": 0
+      }
+    }
+  }
+}

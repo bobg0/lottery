@@ -1,10 +1,82 @@
-/* ═══ Habit Wheel v2 ══════════════════════════════════════════════════════ */
+/* ═══ Habit Wheel v3 ══════════════════════════════════════════════════════ */
 
 const DAILY_Q_GOAL   = 10;
 const TOTAL_Q_GOAL   = 400;
 const CHALLENGE_DAYS = 40;
 const WO_WEEK_GOAL   = 8;
 const STORAGE_KEY    = 'habit_wheel_v2';
+const MIGRATION_BACKUP_KEY = 'habit_wheel_v2_pre_v3_migration_backup';
+const SCHEMA_VERSION = 3;
+const EXPORT_DETAILS_DAYS = 2;
+const NORMAL_CLIPS = ['red', 'blue', 'green', 'purple', 'orange'];
+const GOLD_CLIP = 'gold';
+const CLIP_COLORS = [...NORMAL_CLIPS, GOLD_CLIP];
+const DEFAULT_CLIP_TEMPLATE = {
+  red: 4,
+  blue: 4,
+  green: 4,
+  purple: 4,
+  orange: 4,
+  gold: 2,
+};
+const WHEEL = [
+  { tier: 'tier1',   p: 0.40 },
+  { tier: 'tier2',   p: 0.30 },
+  { tier: 'tier3',   p: 0.20 },
+  { tier: 'bonus',   p: 0.08 },
+  { tier: 'jackpot', p: 0.02 },
+];
+const BONUS_WHEEL = [
+  { outcome: '75',    p: 0.35 },
+  { outcome: '50',    p: 0.25 },
+  { outcome: '25',    p: 0.20 },
+  { outcome: 'free',  p: 0.10 },
+  { outcome: 'extra', p: 0.10 },
+];
+const MAX_BONUS_CHAIN_DEPTH = 5;
+
+/* ═══ NEW PRIZE WHEEL SYSTEM ═══════════════════════════════════════════════ */
+
+const OUTCOME_PROBABILITIES = [
+  { type: 'T1',    weight: 0.40 },
+  { type: 'T2',    weight: 0.30 },
+  { type: 'T3',    weight: 0.20 },
+  { type: 'BONUS', weight: 0.08 },
+  { type: 'MISS',  weight: 0.02 },
+];
+
+const WHEEL_SLICE_COUNT = 50;
+
+const SEGMENT_COLORS = {
+  T1:    { fill: '#93A4B7', text: '#111827', stroke: '#0B1624' },
+  T2:    { fill: '#5E748C', text: '#F8FAFC', stroke: '#0B1624' },
+  T3:    { fill: '#24384F', text: '#F8FAFC', stroke: '#0B1624' },
+  BONUS: { fill: '#F3EFE6', text: '#111827', stroke: '#0B1624' },
+  MISS:  { fill: '#B89B63', text: '#111827', stroke: '#0B1624' },
+};
+
+const SPINNER_CONFIG = {
+  tileWidth: 52,
+  tileGap: 6,
+  repeat: 4,
+};
+
+/** Must match timing used in startSpin for reward lead / hold. */
+const SPIN_DURATION_REDUCED_MS = 6000;
+const SPIN_DURATION_FULL_MS = 100000;
+const SPIN_REWARD_LEAD_MS = 800;
+const SPIN_HOLD_AFTER_MS = 1000;
+
+/** Bottom of spinner card sits this many px above the top of #today-paperclips-card (visual gap). */
+const SPIN_OVERLAY_GAP_ABOVE_PAPERCLIPS_PX = 18;
+
+const SPINNER_TILE_LABELS = {
+  T1: 'Tier 1',
+  T2: 'Tier 2',
+  T3: 'Tier 3',
+  BONUS: 'Bonus',
+  MISS: 'Empty',
+};
 
 /* ═══ Helpers ════════════════════════════════════════════════════════════ */
 
@@ -36,6 +108,19 @@ function fmtDateLong(dateStr) {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const [, m, d] = dateStr.split('-');
   return `${months[parseInt(m) - 1]} ${parseInt(d)}`;
+}
+
+function fmtMinutes(totalMinutes) {
+  if (!totalMinutes) return '0m';
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (!h) return `${m}m`;
+  if (!m) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+function fmtHoursFloor(totalMinutes) {
+  return `${Math.floor((totalMinutes || 0) / 60)}h`;
 }
 
 function fmtTime(isoStr) {
@@ -75,12 +160,255 @@ function getDatesRange(startStr, endStr) {
   return dates;
 }
 
+function maxDateStr(a, b) {
+  return a > b ? a : b;
+}
+
+function shuffle(arr) {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function randomChoice(items) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
 function esc(str) {
   return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/* ═══ WHEEL SYSTEM ═══════════════════════════════════════════════════════ */
+
+function buildWheelSegments(probabilities, totalSlices) {
+  const counts = {};
+  const fractional = {};
+  let totalAssigned = 0;
+
+  for (const { type, weight } of probabilities) {
+    const raw = weight * totalSlices;
+    counts[type] = Math.floor(raw);
+    fractional[type] = raw - counts[type];
+    totalAssigned += counts[type];
+  }
+
+  const remaining = totalSlices - totalAssigned;
+  const sorted = Object.entries(fractional)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, remaining);
+
+  for (const [type] of sorted) {
+    counts[type]++;
+  }
+
+  const segments = [];
+  let currentIndex = 0;
+  const segmentAngle = 360 / totalSlices;
+
+  for (const { type, weight } of probabilities) {
+    const count = counts[type];
+    for (let i = 0; i < count; i++) {
+      const startAngle = currentIndex * segmentAngle;
+      const endAngle = (currentIndex + 1) * segmentAngle;
+      const centerAngle = (startAngle + endAngle) / 2;
+      const colors = SEGMENT_COLORS[type];
+      segments.push({
+        id: `seg-${currentIndex}`,
+        type,
+        label: type,
+        index: currentIndex,
+        startAngle,
+        endAngle,
+        centerAngle,
+        color: colors.fill,
+        textColor: colors.text,
+        strokeColor: colors.stroke,
+      });
+      currentIndex++;
+    }
+  }
+
+  return segments;
+}
+
+function arrangeSegmentsBalanced(segments) {
+  const typeCounts = {};
+  const typeIndices = {};
+
+  for (const { type } of OUTCOME_PROBABILITIES) {
+    typeCounts[type] = segments.filter(s => s.type === type).length;
+    typeIndices[type] = 0;
+  }
+
+  const arranged = new Array(segments.length);
+  let lastType = null;
+  let lastTypeCount = 0;
+
+  for (let i = 0; i < segments.length; i++) {
+    let chosenType = null;
+    let maxGap = -1;
+
+    for (const { type } of OUTCOME_PROBABILITIES) {
+      if (typeIndices[type] >= typeCounts[type]) continue;
+
+      const targetFraction = typeCounts[type] / segments.length;
+      const currentFraction = typeIndices[type] / (i + 1);
+      const gap = targetFraction - currentFraction;
+
+      if (type === lastType && lastTypeCount >= 2) continue;
+
+      if (gap > maxGap) {
+        maxGap = gap;
+        chosenType = type;
+      }
+    }
+
+    if (chosenType === null) {
+      for (const { type } of OUTCOME_PROBABILITIES) {
+        if (typeIndices[type] < typeCounts[type]) {
+          chosenType = type;
+          break;
+        }
+      }
+    }
+
+    const matchingSegments = segments.filter(
+      (s, idx) => s.type === chosenType && !arranged.includes(s)
+    );
+    if (matchingSegments.length > 0) {
+      arranged[i] = matchingSegments[0];
+      typeIndices[chosenType]++;
+      lastType = chosenType;
+      lastTypeCount = lastType === chosenType ? lastTypeCount + 1 : 1;
+    }
+  }
+
+  let angle = 0;
+  for (let i = 0; i < arranged.length; i++) {
+    const seg = arranged[i];
+    const segAngle = 360 / arranged.length;
+    arranged[i] = {
+      ...seg,
+      index: i,
+      startAngle: angle,
+      endAngle: angle + segAngle,
+      centerAngle: angle + segAngle / 2,
+    };
+    angle += segAngle;
+  }
+
+  return arranged;
+}
+
+function chooseOutcome(probabilities) {
+  let r = Math.random();
+  let cumulative = 0;
+  for (const { type, weight } of probabilities) {
+    cumulative += weight;
+    if (r < cumulative) return type;
+  }
+  return probabilities[probabilities.length - 1].type;
+}
+
+function chooseSegmentForOutcome(outcome, segments) {
+  const matching = segments.filter(s => s.type === outcome);
+  if (!matching.length) throw new Error(`No segment found for outcome ${outcome}`);
+  return randomChoice(matching);
+}
+
+function getSpinnerSegments() {
+  const base = buildWheelSegments(OUTCOME_PROBABILITIES, WHEEL_SLICE_COUNT);
+  return arrangeSegmentsBalanced(base);
+}
+
+function setSpinnerTransform(track, x) {
+  track.style.transform = `translate3d(${x}px, 0, 0)`;
+}
+
+function mountSpinner(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return null;
+  const segments = getSpinnerSegments();
+  const tiles = [];
+  for (let r = 0; r < SPINNER_CONFIG.repeat; r++) {
+    for (const seg of segments) tiles.push(seg);
+  }
+  const tileHtml = tiles.map(seg => {
+    const label = SPINNER_TILE_LABELS[seg.type] || seg.type;
+    const styles = `background:${seg.color};color:${seg.textColor};border-color:${seg.strokeColor}`;
+    return `<div class="spin-tile spin-tile-${seg.type.toLowerCase()}" style="${styles}"><span>${label}</span></div>`;
+  }).join('');
+  container.innerHTML =
+    '<div class="spinner-frame">' +
+      `<div class="spinner-track" id="spinner-track">${tileHtml}</div>` +
+      '<div class="spinner-pointer" aria-hidden="true"></div>' +
+    '</div>';
+  const track = document.getElementById('spinner-track');
+  if (track) setSpinnerTransform(track, 0);
+  return { segments };
+}
+
+function animateSpinner(selectedSegment, segments, durationMs, callback) {
+  const track = document.getElementById('spinner-track');
+  const frame = track && track.parentElement;
+  if (!track || !frame) {
+    if (callback) callback();
+    return;
+  }
+
+  const { tileGap, repeat } = SPINNER_CONFIG;
+  const frameWidth =
+    frame.clientWidth || frame.getBoundingClientRect().width || 320;
+  const firstTile = track.querySelector('.spin-tile');
+  const measuredW = firstTile ? firstTile.getBoundingClientRect().width : 0;
+  const tileWidth =
+    measuredW > 0 ? measuredW : SPINNER_CONFIG.tileWidth;
+  const step = tileWidth + tileGap;
+  const targetCopy = Math.max(1, repeat - 2);
+  const targetIndex = targetCopy * segments.length + selectedSegment.index;
+  const jitter = (Math.random() - 0.5) * tileWidth * 0.4;
+  const startX = frameWidth / 2 - tileWidth / 2;
+  const finalX =
+    frameWidth / 2 - (targetIndex * step + tileWidth / 2) - jitter;
+  const distance = finalX - startX;
+
+  setSpinnerTransform(track, startX);
+
+  const prefersReduced =
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const t0 = performance.now();
+
+  const SLOW_END_POWER = prefersReduced ? 5 : 8;
+
+  const easeProgress = (u) => {
+    if (u <= 0) return 0;
+    if (u >= 1) return 1;
+    return 1 - Math.pow(1 - u, SLOW_END_POWER);
+  };
+
+  function tick() {
+    const elapsed = performance.now() - t0;
+    const u = Math.min(1, elapsed / durationMs);
+    const x = startX + distance * easeProgress(u);
+    setSpinnerTransform(track, x);
+
+    if (u < 1) {
+      requestAnimationFrame(tick);
+    } else {
+      setSpinnerTransform(track, finalX);
+      if (callback) callback();
+    }
+  }
+
+  requestAnimationFrame(tick);
 }
 
 /* ═══ Default state ══════════════════════════════════════════════════════ */
@@ -91,7 +419,17 @@ function defaultState() {
     lastDate:  todayStr(),
     weekStart: weekStartStr(),
 
-    sharedTokens: 0,
+    clipInventory: emptyClipInventory(),
+    clipBag: {
+      mode: 'bag',
+      remaining: [],
+      template: { ...DEFAULT_CLIP_TEMPLATE },
+    },
+    lastClipDrawn: null,
+    pendingSpins: 0,
+    blocksTowardNextSpin: 0,
+    clipDrawsByDate: {},
+    wheelRotation: 0,
 
     practiceByDate:  {},   // { 'YYYY-MM-DD': blockCount }
     workoutByDate:   {},   // { 'YYYY-MM-DD': blockCount }
@@ -101,14 +439,17 @@ function defaultState() {
     totalWorkoutBlocks:  0,
     totalQuestions:      0,
 
-    rewardBlocks:     [],  // [{ id, earnedAt, tier }]  — 30 min each
+    rewardBlocks:     [],  // [{ id, minutes, earnedAt, sourceTier, wheelOutcome, activeTier }]
     spentHistory:     [],  // [{ id, blocksSpent, minutesSpent, spentAt }]
     discardedHistory: [],  // [{ id, tier, rewardText, discardedAt }]
+    bonusHistory:     [],  // [{ id, outcome, status, completedAt }]
 
     nextId: 1,
+    schemaVersion: SCHEMA_VERSION,
 
     settings: {
-      spinCost:               3,
+      blocksPerSpin:          3,
+      drawMode:               'bag',
       weeklyRewardCapMinutes: 600,
       rewards: {
         tier1:   { text: '30-minute reward block',  blocks: 1 },
@@ -121,30 +462,226 @@ function defaultState() {
   };
 }
 
+function emptyClipInventory() {
+  return CLIP_COLORS.reduce((acc, color) => {
+    acc[color] = 0;
+    return acc;
+  }, {});
+}
+
 /* ═══ State persistence ══════════════════════════════════════════════════ */
 
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState();
-    const s   = JSON.parse(raw);
-    const def = defaultState();
-    for (const k of Object.keys(def)) {
-      if (s[k] === undefined) s[k] = def[k];
+    const parsed = JSON.parse(raw);
+    const migrated = normalizeState(parsed, raw);
+    if (migrated.schemaVersion !== parsed.schemaVersion) {
+      saveStateObject(migrated);
     }
-    if (!s.settings)         s.settings         = def.settings;
-    if (!s.settings.rewards) s.settings.rewards = def.settings.rewards;
-    for (const t of ['tier1','tier2','tier3','jackpot','bonus']) {
-      if (!s.settings.rewards[t]) s.settings.rewards[t] = def.settings.rewards[t];
-    }
-    return s;
+    return migrated;
   } catch {
     return defaultState();
   }
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  saveStateObject(state);
+}
+
+function saveStateObject(nextState) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+}
+
+function normalizeState(input, rawBackup) {
+  if (!input || typeof input !== 'object') return defaultState();
+
+  if (input.schemaVersion === SCHEMA_VERSION) {
+    return normalizeV3State(input);
+  }
+
+  return migrateV2ToV3(input, rawBackup);
+}
+
+function normalizeV3State(input) {
+  const def = defaultState();
+  const s = { ...def, ...input };
+  s.settings = normalizeSettings(input.settings);
+  s.clipInventory = normalizeClipInventory(input.clipInventory);
+  s.clipBag = normalizeClipBag(input.clipBag, s.settings);
+  s.pendingSpins = Math.max(0, parseInt(input.pendingSpins || 0, 10) || 0);
+  s.blocksTowardNextSpin = Math.max(0, parseInt(input.blocksTowardNextSpin || 0, 10) || 0);
+  s.rewardBlocks = Array.isArray(input.rewardBlocks) ? input.rewardBlocks : [];
+  s.spentHistory = Array.isArray(input.spentHistory) ? input.spentHistory : [];
+  s.discardedHistory = Array.isArray(input.discardedHistory) ? input.discardedHistory : [];
+  s.bonusHistory = Array.isArray(input.bonusHistory) ? input.bonusHistory : [];
+  s.clipDrawsByDate = normalizeClipDraws(input.clipDrawsByDate);
+  s.lastClipDrawn = CLIP_COLORS.includes(input.lastClipDrawn) ? input.lastClipDrawn : null;
+  s.schemaVersion = SCHEMA_VERSION;
+  return s;
+}
+
+function migrateV2ToV3(input, rawBackup) {
+  if (rawBackup && !localStorage.getItem(MIGRATION_BACKUP_KEY)) {
+    localStorage.setItem(MIGRATION_BACKUP_KEY, rawBackup);
+  }
+
+  const def = defaultState();
+  const s = {
+    ...def,
+    startDate: input.startDate || def.startDate,
+    lastDate: input.lastDate || def.lastDate,
+    weekStart: input.weekStart || def.weekStart,
+    practiceByDate: input.practiceByDate || {},
+    workoutByDate: input.workoutByDate || {},
+    questionsByDate: input.questionsByDate || {},
+    totalPracticeBlocks: input.totalPracticeBlocks || 0,
+    totalWorkoutBlocks: input.totalWorkoutBlocks || 0,
+    totalQuestions: input.totalQuestions || 0,
+    rewardBlocks: normalizeRewardBlocks(input.rewardBlocks || []),
+    spentHistory: Array.isArray(input.spentHistory) ? input.spentHistory : [],
+    discardedHistory: Array.isArray(input.discardedHistory) ? input.discardedHistory : [],
+    nextId: input.nextId || def.nextId,
+    settings: normalizeSettings(input.settings),
+    schemaVersion: SCHEMA_VERSION,
+  };
+
+  const oldTokens = Math.max(0, parseInt(input.sharedTokens || 0, 10) || 0);
+  for (let i = 0; i < oldTokens; i++) {
+    const clip = drawClipFromState(s);
+    s.clipInventory[clip]++;
+  }
+  s.pendingSpins += Math.floor(oldTokens / s.settings.blocksPerSpin);
+  s.blocksTowardNextSpin = oldTokens % s.settings.blocksPerSpin;
+
+  return normalizeV3State(s);
+}
+
+function normalizeSettings(settings = {}) {
+  const def = defaultState().settings;
+  const blocksPerSpin = parseInt(settings.blocksPerSpin ?? settings.spinCost ?? def.blocksPerSpin, 10);
+  const normalized = {
+    ...def,
+    ...settings,
+    blocksPerSpin: !isNaN(blocksPerSpin) && blocksPerSpin > 0 ? blocksPerSpin : def.blocksPerSpin,
+    drawMode: settings.drawMode || def.drawMode,
+    rewards: { ...def.rewards, ...(settings.rewards || {}) },
+  };
+  delete normalized.spinCost;
+  for (const t of ['tier1','tier2','tier3','jackpot','bonus']) {
+    normalized.rewards[t] = { ...def.rewards[t], ...(normalized.rewards[t] || {}) };
+  }
+  return normalized;
+}
+
+function normalizeClipInventory(inv = {}) {
+  const next = emptyClipInventory();
+  for (const color of CLIP_COLORS) {
+    const migrated = color === GOLD_CLIP ? (inv.gold || 0) + (inv.yellow || 0) : inv[color];
+    next[color] = Math.max(0, parseInt(migrated || 0, 10) || 0);
+  }
+  return next;
+}
+
+function normalizeClipBag(bag = {}, settings = {}) {
+  const template = normalizeClipTemplate(bag.template || DEFAULT_CLIP_TEMPLATE);
+  const remaining = Array.isArray(bag.remaining)
+    ? bag.remaining.filter(color => CLIP_COLORS.includes(color))
+    : [];
+  return {
+    mode: settings.drawMode || bag.mode || 'bag',
+    remaining,
+    template,
+  };
+}
+
+function normalizeClipTemplate(template = {}) {
+  const next = {};
+  for (const color of CLIP_COLORS) {
+    const fallback = DEFAULT_CLIP_TEMPLATE[color];
+    const raw = color === GOLD_CLIP ? (template.gold ?? template.yellow ?? fallback) : (template[color] ?? fallback);
+    const value = parseInt(raw, 10);
+    next[color] = !isNaN(value) && value >= 0 ? value : fallback;
+  }
+  return next;
+}
+
+function normalizeRewardBlocks(blocks) {
+  if (!Array.isArray(blocks)) return [];
+  return blocks.map(block => ({
+    ...block,
+    minutes: block.minutes || 30,
+    sourceTier: block.sourceTier || block.tier || 'tier1',
+    wheelOutcome: block.wheelOutcome || block.tier || 'tier1',
+    activeTier: block.activeTier || 1,
+  }));
+}
+
+function normalizeClipDraws(draws = {}) {
+  const today = todayStr();
+  if (!draws || typeof draws !== 'object' || Array.isArray(draws)) {
+    return { [today]: [] };
+  }
+
+  const normalized = {};
+  for (const [date, items] of Object.entries(draws)) {
+    if (!Array.isArray(items)) continue;
+    const validItems = items
+      .map(draw => draw && draw.clip === 'yellow' ? { ...draw, clip: GOLD_CLIP } : draw)
+      .filter(draw =>
+        draw && ['practice', 'workout', 'bonus'].includes(draw.kind) && CLIP_COLORS.includes(draw.clip)
+      );
+    if (validItems.length) normalized[date] = validItems;
+  }
+
+  if (!normalized[today]) normalized[today] = [];
+  return normalized;
+}
+
+function getRecentDateKeys(days) {
+  const dates = [];
+  const today = new Date();
+  for (let i = 0; i < days; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return new Set(dates);
+}
+
+function filterDateMapByRecentDays(map, recentDays) {
+  return Object.fromEntries(
+    Object.entries(map || {}).filter(([date]) => recentDays.has(date))
+  );
+}
+
+function filterArrayByDateKey(items, dateKey, recentDays) {
+  return (items || []).filter(item => {
+    if (!item || !item[dateKey]) return false;
+    const date = String(item[dateKey]).slice(0, 10);
+    return recentDays.has(date);
+  });
+}
+
+function exportStateForBackup(sourceState, days = EXPORT_DETAILS_DAYS) {
+  const recentDays = getRecentDateKeys(days);
+  return {
+    ...sourceState,
+    practiceByDate: filterDateMapByRecentDays(sourceState.practiceByDate, recentDays),
+    workoutByDate: filterDateMapByRecentDays(sourceState.workoutByDate, recentDays),
+    questionsByDate: filterDateMapByRecentDays(sourceState.questionsByDate, recentDays),
+    clipDrawsByDate: filterDateMapByRecentDays(sourceState.clipDrawsByDate, recentDays),
+    rewardBlocks: filterArrayByDateKey(sourceState.rewardBlocks, 'earnedAt', recentDays),
+    spentHistory: filterArrayByDateKey(sourceState.spentHistory, 'spentAt', recentDays),
+    discardedHistory: filterArrayByDateKey(sourceState.discardedHistory, 'discardedAt', recentDays),
+    bonusHistory: filterArrayByDateKey(sourceState.bonusHistory, 'completedAt', recentDays),
+  };
+}
+
+function isValidState(input) {
+  return !!input && typeof input === 'object' &&
+    (input.schemaVersion === SCHEMA_VERSION || input.startDate || input.practiceByDate || input.rewardBlocks);
 }
 
 let state = loadState();
@@ -154,7 +691,7 @@ let state = loadState();
 const getQToday        = ()  => state.questionsByDate[todayStr()] || 0;
 const getPracToday     = ()  => state.practiceByDate[todayStr()]  || 0;
 const getWorkToday     = ()  => state.workoutByDate[todayStr()]   || 0;
-const getSpinsAvail    = ()  => Math.floor(state.sharedTokens / state.settings.spinCost);
+const getSpinsAvail    = ()  => state.pendingSpins || 0;
 
 function dayNumber() {
   return daysBetween(state.startDate, todayStr()) + 1;
@@ -194,6 +731,129 @@ function spentWeekMin() {
     .reduce((s, e) => s + e.minutesSpent, 0);
 }
 
+function buildBagFromTemplate(template) {
+  const clips = [];
+  for (const color of CLIP_COLORS) {
+    for (let i = 0; i < (template[color] || 0); i++) clips.push(color);
+  }
+  return shuffle(clips);
+}
+
+function drawClipFromState(targetState) {
+  targetState.clipInventory = normalizeClipInventory(targetState.clipInventory);
+  targetState.settings = normalizeSettings(targetState.settings);
+  targetState.clipBag = normalizeClipBag(targetState.clipBag, targetState.settings);
+
+  if (targetState.settings.drawMode === 'probability') {
+    const bag = buildBagFromTemplate(targetState.clipBag.template);
+    return bag[Math.floor(Math.random() * bag.length)] || 'red';
+  }
+
+  if (!targetState.clipBag.remaining.length) {
+    targetState.clipBag.remaining = buildBagFromTemplate(targetState.clipBag.template);
+  }
+  return targetState.clipBag.remaining.pop() || 'red';
+}
+
+function drawClip() {
+  const clip = drawClipFromState(state);
+  state.clipInventory[clip] = (state.clipInventory[clip] || 0) + 1;
+  return clip;
+}
+
+function addProgressTowardSpin() {
+  const blocksPerSpin = Math.max(1, state.settings.blocksPerSpin || 3);
+  state.blocksTowardNextSpin++;
+  while (state.blocksTowardNextSpin >= blocksPerSpin) {
+    state.pendingSpins++;
+    state.blocksTowardNextSpin -= blocksPerSpin;
+  }
+}
+
+function removeProgressTowardSpin() {
+  const blocksPerSpin = Math.max(1, state.settings.blocksPerSpin || 3);
+  if ((state.blocksTowardNextSpin || 0) > 0) {
+    state.blocksTowardNextSpin--;
+  } else if ((state.pendingSpins || 0) > 0) {
+    state.pendingSpins--;
+    state.blocksTowardNextSpin = blocksPerSpin - 1;
+  }
+}
+
+function clipLabel(color) {
+  return color.charAt(0).toUpperCase() + color.slice(1);
+}
+
+function tierNumber(tier) {
+  return { tier1: 1, tier2: 2, tier3: 3, jackpot: 4 }[tier] || 1;
+}
+
+function tierKey(activeTier) {
+  return activeTier === 3 ? 'tier3' : activeTier === 2 ? 'tier2' : 'tier1';
+}
+
+function highestActiveTier(activeTier) {
+  return tierKey(activeTier);
+}
+
+function getTier2Options() {
+  return NORMAL_CLIPS
+    .filter(color => (state.clipInventory[color] || 0) >= 2)
+    .map(color => ({ tier: 2, color, count: 2, label: `2 ${clipLabel(color)}` }));
+}
+
+function getTier3Options() {
+  const options = NORMAL_CLIPS
+    .filter(color => (state.clipInventory[color] || 0) >= 3)
+    .map(color => ({ tier: 3, color, count: 3, label: `3 ${clipLabel(color)}` }));
+  if ((state.clipInventory.gold || 0) >= 1) {
+    options.push({ tier: 3, color: 'gold', count: 1, label: '1 Gold' });
+  }
+  return options;
+}
+
+function chooseActivationOption(tier) {
+  if (tier === 1) return { tier: 1 };
+  const options = tier === 2 ? getTier2Options() : getTier3Options();
+  return options.length ? randomChoice(options) : null;
+}
+
+function spendActivationCost(option) {
+  if (!option || !option.color) return true;
+  if ((state.clipInventory[option.color] || 0) < option.count) return false;
+  state.clipInventory[option.color] -= option.count;
+  return true;
+}
+
+function clipSummaryHtml() {
+  return CLIP_COLORS.map(color => `
+    <span class="clip-pill clip-${color}">
+      <span class="clip-dot-mini"></span>${clipLabel(color)} ${state.clipInventory[color] || 0}
+    </span>
+  `).join('');
+}
+
+function clipBarsHtml() {
+  const displayClips = [...NORMAL_CLIPS, GOLD_CLIP];
+  const maxVal = Math.max(1, ...displayClips.map(color => state.clipInventory[color] || 0));
+  return displayClips.map((color, index) => {
+    const count = state.clipInventory[color] || 0;
+    const width = Math.max(4, (count / maxVal) * 100);
+    const lastClass = state.lastClipDrawn === color ? ' last-drawn' : '';
+    return `
+      <div class="clip-bar-row${lastClass}">
+        <span class="clip-bar-label">${clipLabel(color)}</span>
+        <div class="clip-bar-track"><div class="clip-bar-fill clip-tone-${index}" style="width:${width}%"></div></div>
+        <strong class="clip-bar-count">${count}</strong>
+      </div>
+    `;
+  }).join('');
+}
+
+function cashInSummary(options) {
+  return options.length ? options.map(o => o.label).join(', ') : 'None available';
+}
+
 /* ═══ Date reset ═════════════════════════════════════════════════════════ */
 
 function checkDateReset() {
@@ -201,25 +861,42 @@ function checkDateReset() {
   const ws    = weekStartStr();
   if (state.lastDate !== today) state.lastDate = today;
   if (state.weekStart !== ws)   state.weekStart = ws;
+  state.clipDrawsByDate = normalizeClipDraws(state.clipDrawsByDate);
   saveState();
 }
 
 /* ═══ Screen navigation ══════════════════════════════════════════════════ */
 
 let currentScreen = 'today';
+let progressRange = 'week';
+let pendingSpinResult = null;
+let isSpinning = false;
+let spinOverlayDismissTimer = null;
+let spinOverlayEarlyRewardTimer = null;
+let selectedRewardBlockIds = new Set();
+
+function clearSpinOverlayDismissTimer() {
+  if (spinOverlayDismissTimer) {
+    clearTimeout(spinOverlayDismissTimer);
+    spinOverlayDismissTimer = null;
+  }
+}
+
+function clearSpinOverlayEarlyRewardTimer() {
+  if (spinOverlayEarlyRewardTimer) {
+    clearTimeout(spinOverlayEarlyRewardTimer);
+    spinOverlayEarlyRewardTimer = null;
+  }
+}
 
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => {
     s.classList.remove('active');
     s.style.display = 'none';
   });
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
 
   const scr = document.getElementById(`screen-${name}`);
   if (scr) { scr.classList.add('active'); scr.style.display = ''; }
-
-  const btn = document.querySelector(`.nav-btn[data-screen="${name}"]`);
-  if (btn) btn.classList.add('active');
 
   currentScreen = name;
   renderScreen(name);
@@ -229,7 +906,6 @@ function renderScreen(name) {
   if (name === 'today')     renderToday();
   if (name === 'progress')  renderProgress();
   if (name === 'rewards')   renderRewards();
-  if (name === 'inventory') renderInventory();
   if (name === 'settings')  renderSettings();
 }
 
@@ -252,15 +928,21 @@ function renderToday() {
   else if (dd < 0) { pill.textContent = `Deficit ${dd}`;   pill.classList.add('pill-deficit'); }
   else             { pill.textContent = 'On pace';          pill.classList.add('pill-pace');    }
 
-  // Spin card
-  const avail = getSpinsAvail();
-  document.getElementById('tokens-display').textContent    = state.sharedTokens;
-  document.getElementById('spins-display').textContent     = avail;
-  document.getElementById('spin-cost-display').textContent = state.settings.spinCost;
+  document.getElementById('today-clip-summary').innerHTML = clipBarsHtml();
+  renderTierButtons();
+}
 
-  const spinBtn = document.getElementById('spin-btn');
-  spinBtn.disabled    = avail === 0;
-  spinBtn.textContent = avail === 0 ? 'No spins available' : 'Spin';
+function renderTierButtons() {
+  const t1 = document.getElementById('tier1-spin-btn');
+  const t2 = document.getElementById('tier2-spin-btn');
+  const t3 = document.getElementById('tier3-spin-btn');
+  if (!t1 || !t2 || !t3) return;
+  const hasPending = getSpinsAvail() > 0;
+  const hasT2 = !!getTier2Options().length;
+  const hasT3 = !!getTier3Options().length;
+  t1.disabled = isSpinning || !hasPending;
+  t2.disabled = isSpinning || !hasT2;
+  t3.disabled = isSpinning || !hasT3;
 }
 
 /* ═══ PROGRESS ═══════════════════════════════════════════════════════════ */
@@ -270,144 +952,171 @@ function renderProgress() {
   const total = state.totalQuestions;
   const exp   = expectedQuestions();
   const cd    = total - exp;
-  const rem   = Math.max(0, TOTAL_Q_GOAL - total);
-  const dLeft = Math.max(0, CHALLENGE_DAYS - dn);
-  const need  = dLeft > 0 ? (rem / dLeft).toFixed(1) : '—';
 
   document.getElementById('prog-q').textContent   = `${total} / ${TOTAL_Q_GOAL}`;
   document.getElementById('prog-day').textContent = `${dn} / ${CHALLENGE_DAYS}`;
-  document.getElementById('prog-need').textContent = need;
 
   const netEl = document.getElementById('prog-net');
   netEl.textContent = cd > 0 ? `+${cd}` : `${cd}`;
   netEl.className   = `metric-v${cd < 0 ? ' neg' : cd > 0 ? ' pos' : ''}`;
 
-  const avg3 = rollingAvg(3);
-  const avg7 = rollingAvg(7);
-  document.getElementById('avg3').textContent = avg3 != null ? `${avg3.toFixed(1)} / day` : '—';
-  document.getElementById('avg7').textContent = avg7 != null ? `${avg7.toFixed(1)} / day` : '—';
+  const { dates } = getProgressRangeData();
+  const practiceBlocks = sumByDate(state.practiceByDate, dates);
+  const workoutBlocks = sumByDate(state.workoutByDate, dates);
+  const practiceMinutes = practiceBlocks * 30;
+  const workoutMinutes = workoutBlocks * 30;
 
-  document.getElementById('prog-workout-week').textContent = getWeekWorkBlocks();
+  document.querySelectorAll('[data-progress-range]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.progressRange === progressRange);
+  });
+  document.getElementById('range-practice-time').textContent = fmtHoursFloor(practiceMinutes);
+  document.getElementById('range-workout-time').textContent = fmtHoursFloor(workoutMinutes);
 
-  buildProgressChart();
+  buildTimeChart('practice-time-chart', 'practice-chart-start', 'practice-y-axis', dates, state.practiceByDate, 'practice');
+  buildTimeChart('workout-time-chart', 'workout-chart-start', 'workout-y-axis', dates, state.workoutByDate, 'workout');
 }
 
-function buildProgressChart() {
-  const el = document.getElementById('progress-chart');
-  el.innerHTML = '';
-
+function getProgressRangeData() {
   const today = todayStr();
-  const all   = getDatesRange(state.startDate, today);
-  const last20 = all.slice(-20);
+  const now = new Date();
+  let start = state.startDate;
 
-  if (!last20.length) {
+  if (progressRange === 'week') {
+    start = maxDateStr(state.startDate, weekStartStr());
+  } else if (progressRange === 'month') {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    start = maxDateStr(state.startDate, monthStart);
+  } else if (progressRange === 'ytd') {
+    const yearStart = new Date(now.getFullYear(), 0, 1).toISOString().slice(0, 10);
+    start = maxDateStr(state.startDate, yearStart);
+  }
+
+  return { dates: getDatesRange(start, today) };
+}
+
+function sumByDate(source, dates) {
+  return dates.reduce((sum, date) => sum + (source[date] || 0), 0);
+}
+
+function getSpentBlocksByDate(history) {
+  return (history || []).reduce((acc, entry) => {
+    if (!entry || !entry.spentAt) return acc;
+    const date = String(entry.spentAt).slice(0, 10);
+    const blocks = Math.max(0, parseInt(entry.blocksSpent || 0, 10) || 0);
+    if (!blocks) return acc;
+    acc[date] = (acc[date] || 0) + blocks;
+    return acc;
+  }, {});
+}
+
+
+function buildTimeChart(chartId, labelId, axisId, dates, source, className) {
+  const el = document.getElementById(chartId);
+  const axisEl = document.getElementById(axisId);
+  el.innerHTML = '';
+  axisEl.innerHTML = '';
+
+  if (!dates.length) {
     el.innerHTML = '<span style="font-size:13px;color:var(--muted)">No data yet.</span>';
     return;
   }
 
-  // Center axis
-  const axis = document.createElement('div');
-  axis.className = 'vchart-axis';
-  el.appendChild(axis);
-
-  const deltas = last20.map(d => (state.questionsByDate[d] || 0) - DAILY_Q_GOAL);
-  const maxAbs = Math.max(1, ...deltas.map(d => Math.abs(d)));
-
-  for (const delta of deltas) {
+  const values = dates.map(d => (source[d] || 0) * 30);
+  const maxVal = Math.max(30, ...values);
+  const topTick = Math.max(30, Math.ceil(maxVal / 30) * 30);
+  axisEl.innerHTML = `<span>${topTick / 30}</span><span></span>`;
+  for (const value of values) {
     const col = document.createElement('div');
-    col.className = 'vchart-col';
-    if (delta !== 0) {
-      const pct = Math.min(44, (Math.abs(delta) / maxAbs) * 44);
-      const bar = document.createElement('div');
-      bar.className = `vchart-bar ${delta > 0 ? 'vchart-pos' : 'vchart-neg'}`;
-      bar.style.height = `${pct}%`;
-      col.appendChild(bar);
+    col.className = 'bar-col';
+    if (value > 0) {
+      const fill = document.createElement('div');
+      fill.className = `bar-fill ${className}`;
+      fill.style.height = `${Math.max(4, (value / topTick) * 100)}%`;
+      col.appendChild(fill);
     }
     el.appendChild(col);
   }
 
-  const lbl = document.getElementById('vchart-start');
-  const n   = last20.length - 1;
-  lbl.textContent = n > 0 ? `${n} day${n > 1 ? 's' : ''} ago` : 'Today';
+  document.getElementById(labelId).textContent = dates.length > 1 ? fmtDate(dates[0]) : 'Today';
 }
 
 /* ═══ REWARDS ════════════════════════════════════════════════════════════ */
 
 function renderRewards() {
-  const avail     = state.rewardBlocks.length;
-  const spentToday = spentTodayMin();
-  const spentWeek  = spentWeekMin();
-  const cap = state.settings.weeklyRewardCapMinutes;
-
-  document.getElementById('rew-blocks').textContent     = avail;
-  document.getElementById('rew-mins').textContent       = avail * 30;
-  document.getElementById('rew-spent-today').textContent = spentToday;
-  document.getElementById('rew-spent-week').textContent  = spentWeek;
-  document.getElementById('rew-cap').textContent         = cap;
-
   renderBlockGrid();
+
+  const { dates } = getProgressRangeData();
+  buildTimeChart(
+    'reward-spent-time-chart',
+    'reward-spent-chart-start',
+    'reward-spent-y-axis',
+    dates,
+    getSpentBlocksByDate(state.spentHistory),
+    'reward-spent'
+  );
+
   renderSpentHistory();
   renderDiscardedHistory();
 }
 
 function renderBlockGrid() {
   const el = document.getElementById('reward-block-grid');
-  if (!state.rewardBlocks.length) {
-    el.innerHTML = '<p class="empty-state" style="width:100%">No reward blocks yet. Spin to earn some.</p>';
-    return;
-  }
+  selectedRewardBlockIds = new Set(
+    [...selectedRewardBlockIds].filter(id => state.rewardBlocks.some(block => block.id === id))
+  );
+  updateSpendSelectedButton();
+
   el.innerHTML = '';
-  for (const block of state.rewardBlocks) {
+  state.rewardBlocks.forEach(block => {
     const sq = document.createElement('div');
-    sq.className  = 'reward-block';
+    sq.className  = `reward-block${selectedRewardBlockIds.has(block.id) ? ' selected' : ''}`;
     sq.dataset.id = block.id;
-    sq.addEventListener('click', () => showSpendConfirm(block.id));
+    sq.addEventListener('click', () => toggleRewardBlockSelection(block.id));
+    el.appendChild(sq);
+  });
+
+  const emptyCount = Math.max(0, 8 - state.rewardBlocks.length);
+  for (let i = 0; i < emptyCount; i++) {
+    const sq = document.createElement('div');
+    sq.className = 'reward-block empty';
     el.appendChild(sq);
   }
 }
 
-let pendingSpendId = null;
-
-function showSpendConfirm(blockId) {
-  pendingSpendId = blockId;
-  const warn = document.getElementById('spend-cap-warn');
-  if (spentWeekMin() + 30 > state.settings.weeklyRewardCapMinutes) {
-    warn.classList.remove('hidden');
+function toggleRewardBlockSelection(blockId) {
+  if (selectedRewardBlockIds.has(blockId)) {
+    selectedRewardBlockIds.delete(blockId);
   } else {
-    warn.classList.add('hidden');
+    selectedRewardBlockIds.add(blockId);
   }
-  showSheet('spend-confirm-sheet');
+  renderBlockGrid();
 }
 
-function confirmSpendBlock() {
-  if (pendingSpendId === null) return;
-  const idx = state.rewardBlocks.findIndex(b => b.id === pendingSpendId);
-  if (idx === -1) { pendingSpendId = null; return; }
-  state.rewardBlocks.splice(idx, 1);
-  state.spentHistory.push({
-    id: state.nextId++,
-    blocksSpent: 1,
-    minutesSpent: 30,
-    spentAt: new Date().toISOString(),
-  });
-  pendingSpendId = null;
-  saveState();
-  hideSheet('spend-confirm-sheet');
-  renderRewards();
+function updateSpendSelectedButton() {
+  const btn = document.getElementById('spend-selected-btn');
+  if (!btn) return;
+  const n = selectedRewardBlockIds.size;
+  btn.disabled = n === 0;
+  btn.textContent = n ? `Spend selected (${n})` : 'Spend selected';
 }
 
-function spendNBlocks(n) {
-  if (n <= 0 || n > state.rewardBlocks.length) return false;
-  state.rewardBlocks.splice(0, n);
+function spendSelectedBlocks() {
+  const selectedIds = [...selectedRewardBlockIds];
+  if (!selectedIds.length) return;
+  const selectedSet = new Set(selectedIds);
+  const selectedBlocks = state.rewardBlocks.filter(block => selectedSet.has(block.id));
+  if (!selectedBlocks.length) return;
+
+  state.rewardBlocks = state.rewardBlocks.filter(block => !selectedSet.has(block.id));
   state.spentHistory.push({
     id: state.nextId++,
-    blocksSpent: n,
-    minutesSpent: n * 30,
+    blocksSpent: selectedBlocks.length,
+    minutesSpent: selectedBlocks.length * 30,
     spentAt: new Date().toISOString(),
   });
+  selectedRewardBlockIds.clear();
   saveState();
   renderRewards();
-  return true;
 }
 
 function renderSpentHistory() {
@@ -426,7 +1135,10 @@ function renderSpentHistory() {
   }
 
   el.innerHTML = '';
-  for (const [ds, entries] of Object.entries(grouped)) {
+  const recentGroups = Object.entries(grouped)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .slice(0, 2);
+  for (const [ds, entries] of recentGroups) {
     const dailyMins = entries.reduce((s, e) => s + e.minutesSpent, 0);
     const g = document.createElement('div');
     g.className = 'hist-group';
@@ -466,22 +1178,12 @@ function renderDiscardedHistory() {
   }
 }
 
-/* ═══ INVENTORY ══════════════════════════════════════════════════════════ */
-
-function renderInventory() {
-  document.getElementById('inv-tokens').textContent     = state.sharedTokens;
-  document.getElementById('inv-spin-cost').textContent  = `${state.settings.spinCost} blocks`;
-  document.getElementById('inv-spins').textContent      = getSpinsAvail();
-  document.getElementById('inv-prac-today').textContent = getPracToday();
-  document.getElementById('inv-work-today').textContent = getWorkToday();
-  document.getElementById('inv-prac-total').textContent = state.totalPracticeBlocks;
-  document.getElementById('inv-work-total').textContent = state.totalWorkoutBlocks;
-}
-
 /* ═══ SETTINGS ═══════════════════════════════════════════════════════════ */
 
 function renderSettings() {
-  document.getElementById('set-spin-cost-val').textContent = `${state.settings.spinCost} blocks`;
+  document.getElementById('set-blocks-per-spin-val').textContent = `${state.settings.blocksPerSpin} blocks`;
+  document.getElementById('set-clip-bag-val').textContent =
+    `${state.clipBag.template.red || 0} normal, ${state.clipBag.template.gold || 0} gold`;
   document.getElementById('set-cap-val').textContent       = `${state.settings.weeklyRewardCapMinutes} min`;
 }
 
@@ -578,105 +1280,359 @@ function showDeficitSheet() {
 
 /* ═══ SPIN ═══════════════════════════════════════════════════════════════ */
 
-const WHEEL = [
-  { tier: 'tier1',   p: 0.40 },
-  { tier: 'tier2',   p: 0.30 },
-  { tier: 'tier3',   p: 0.20 },
-  { tier: 'bonus',   p: 0.08 },
-  { tier: 'jackpot', p: 0.02 },
-];
-
 function spinWheel() {
-  let r = Math.random(), cum = 0;
-  for (const { tier, p } of WHEEL) {
-    cum += p;
-    if (r < cum) return tier;
-  }
-  return 'tier1';
+  // Uses new probability model internally but returns legacy format for backward compat
+  const outcome = chooseOutcome(OUTCOME_PROBABILITIES);
+  const map = { T1: 'tier1', T2: 'tier2', T3: 'tier3', BONUS: 'bonus', MISS: 'jackpot' };
+  return map[outcome] || 'tier1';
 }
 
 function tierLabel(tier) {
-  return { tier1:'Tier 1', tier2:'Tier 2', tier3:'Tier 3', jackpot:'Jackpot', bonus:'Bonus' }[tier] || tier;
+  const tierMap = {
+    tier1: 'Tier 1',
+    tier2: 'Tier 2',
+    tier3: 'Tier 3',
+    bonus: 'Bonus',
+    T1: 'Tier 1',
+    T2: 'Tier 2',
+    T3: 'Tier 3',
+    BONUS: 'Bonus',
+    MISS: 'Empty',
+  };
+  return tierMap[tier] || tier;
 }
 
-let pendingSpinResult = null;
+function resetSpinOverlayAnchorStyles() {
+  const inner = document.querySelector('#spin-overlay .spin-overlay-inner');
+  if (!inner) return;
+  inner.style.position = '';
+  inner.style.left = '';
+  inner.style.transform = '';
+  inner.style.bottom = '';
+}
 
-function doSpin() {
-  if (getSpinsAvail() <= 0) return;
+function positionSpinOverlayAnchor() {
+  const overlay = document.getElementById('spin-overlay');
+  const anchorEl = document.getElementById('today-paperclips-card');
+  const inner = document.querySelector('#spin-overlay .spin-overlay-inner');
+  if (!overlay || !anchorEl || !inner || overlay.classList.contains('hidden')) return;
 
-  state.sharedTokens = Math.max(0, state.sharedTokens - state.settings.spinCost);
-  saveState();
+  const pr = anchorEl.getBoundingClientRect();
+  const ih = window.innerHeight;
+  let bottomPx = ih - pr.top + SPIN_OVERLAY_GAP_ABOVE_PAPERCLIPS_PX;
+  bottomPx = Math.max(10, Math.min(bottomPx, ih - 48));
 
-  const tier   = spinWheel();
-  const cfg    = state.settings.rewards[tier];
-  const text   = cfg.text;
-  const blocks = cfg.blocks;
+  inner.style.position = 'fixed';
+  inner.style.left = '50%';
+  inner.style.transform = 'translateX(-50%)';
+  inner.style.bottom = `${bottomPx}px`;
+}
 
-  pendingSpinResult = { tier, text, blocks };
-
-  if (tier === 'bonus') {
-    showSheet('bonus-sheet');
-  } else {
-    document.getElementById('result-tier').textContent   = tierLabel(tier);
-    document.getElementById('result-blocks').textContent = `${blocks} reward block${blocks !== 1 ? 's' : ''}`;
-    document.getElementById('result-mins').textContent   = `${blocks * 30} min`;
-    document.getElementById('result-text').textContent   = text;
-    showSheet('spin-result-sheet');
+function openSpinOverlay() {
+  clearSpinOverlayDismissTimer();
+  clearSpinOverlayEarlyRewardTimer();
+  const el = document.getElementById('spin-overlay');
+  if (!el) return;
+  el.classList.remove('hidden');
+  el.setAttribute('aria-hidden', 'false');
+  const reward = document.getElementById('spin-overlay-reward');
+  if (reward) {
+    reward.innerHTML = '';
+    reward.className = 'spin-overlay-reward';
   }
-
-  renderToday();
-}
-
-function addToRewards() {
-  if (!pendingSpinResult) return;
-  const { tier, blocks } = pendingSpinResult;
-  for (let i = 0; i < blocks; i++) {
-    state.rewardBlocks.push({ id: state.nextId++, earnedAt: new Date().toISOString(), tier });
-  }
-  pendingSpinResult = null;
-  saveState();
-  hideSheet('spin-result-sheet');
-  renderScreen(currentScreen);
-}
-
-function discardSpin() {
-  if (!pendingSpinResult) return;
-  showConfirm('Discard this reward?', () => {
-    const { tier, text } = pendingSpinResult;
-    state.discardedHistory.push({
-      id: state.nextId++,
-      tier,
-      rewardText: text,
-      discardedAt: new Date().toISOString(),
-    });
-    pendingSpinResult = null;
-    saveState();
-    hideSheet('spin-result-sheet');
-    renderScreen(currentScreen);
+  requestAnimationFrame(() => {
+    positionSpinOverlayAnchor();
+    requestAnimationFrame(positionSpinOverlayAnchor);
   });
 }
 
-function handleBonusDone() {
-  // Extra 30-min block completed → earn back one token (= one extra spin opportunity)
-  state.sharedTokens++;
-  saveState();
-  hideSheet('bonus-sheet');
-  pendingSpinResult = null;
-  renderToday();
+function hideSpinOverlay() {
+  clearSpinOverlayDismissTimer();
+  clearSpinOverlayEarlyRewardTimer();
+  resetSpinOverlayAnchorStyles();
+  const el = document.getElementById('spin-overlay');
+  if (el) {
+    el.classList.add('hidden');
+    el.setAttribute('aria-hidden', 'true');
+  }
+  const strip = document.getElementById('spin-overlay-strip');
+  if (strip) strip.innerHTML = '';
+  const reward = document.getElementById('spin-overlay-reward');
+  if (reward) {
+    reward.innerHTML = '';
+    reward.className = 'spin-overlay-reward';
+  }
 }
 
-function handleBonusSkip() {
-  if (pendingSpinResult) {
-    state.discardedHistory.push({
-      id: state.nextId++,
-      tier: 'bonus',
-      rewardText: 'Bonus skipped',
-      discardedAt: new Date().toISOString(),
-    });
-    pendingSpinResult = null;
-    saveState();
+function rewardDisplayTierClass(sourceTier) {
+  if (!sourceTier) return 'reward-tier-0';
+  if (sourceTier === 'tier3') return 'reward-tier-3';
+  if (sourceTier === 'tier2') return 'reward-tier-2';
+  return 'reward-tier-1';
+}
+
+function fillSpinOverlayReward(wheelOutcome, activeTier, resolved, granted) {
+  const rewardEl = document.getElementById('spin-overlay-reward');
+  if (!rewardEl) return;
+
+  const tierCls = rewardDisplayTierClass(granted.sourceTier);
+  let main;
+  if (!granted.blocks || wheelOutcome === 'MISS') {
+    main = 'Empty';
+  } else {
+    const tierPay = tierLabel(granted.sourceTier);
+    main = `${tierPay} · ${granted.blocks} block${granted.blocks !== 1 ? 's' : ''} · ${granted.minutes} min`;
   }
-  hideSheet('bonus-sheet');
+
+  const subParts = [];
+  if (resolved.nearMiss && wheelOutcome !== 'MISS') subParts.push(resolved.nearMiss);
+
+  rewardEl.className = `spin-overlay-reward ${tierCls}`;
+  rewardEl.innerHTML =
+    `<p class="spin-reward-main">${esc(main)}</p>` +
+    (subParts.length
+      ? `<div class="spin-reward-sub">${subParts.map(s => esc(s)).join(' ')}</div>`
+      : '');
+  requestAnimationFrame(() => {
+    positionSpinOverlayAnchor();
+  });
+}
+
+function dismissSpinOverlay() {
+  if (!pendingSpinResult) return;
+  clearSpinOverlayDismissTimer();
+  const { wheelOutcome, activeTier, granted } = pendingSpinResult;
+  addRewardBlocks(granted, wheelOutcome, activeTier);
+  saveState();
+  hideSpinOverlay();
+  pendingSpinResult = null;
+  if (wheelOutcome === 'BONUS') {
+    openBonusFlow(activeTier, wheelOutcome, granted);
+  } else {
+    renderScreen(currentScreen);
+  }
+}
+
+function startSpin(tier) {
+  if (isSpinning) return;
+
+  if (tier === 1) {
+    if (getSpinsAvail() <= 0) {
+      alert('No pending spins available yet.');
+      renderToday();
+      return;
+    }
+  }
+
+  const option = chooseActivationOption(tier);
+  if (!option) {
+    alert(`Tier ${tier} is not unlocked yet.`);
+    renderToday();
+    return;
+  }
+  if (option.tier > 1 && !spendActivationCost(option)) {
+    alert('Not enough clips for that cash-in.');
+    renderScreen(currentScreen);
+    return;
+  }
+
+  isSpinning = true;
+  if (tier === 1) {
+    state.pendingSpins = Math.max(0, (state.pendingSpins || 0) - 1);
+  }
+  saveState();
+
+  showScreen('today');
+  openSpinOverlay();
+
+  const mounted = mountSpinner('spin-overlay-strip');
+  if (!mounted) {
+    isSpinning = false;
+    hideSpinOverlay();
+    return;
+  }
+  const { segments } = mounted;
+
+  const wheelOutcome = chooseOutcome(OUTCOME_PROBABILITIES);
+  const selectedSegment = chooseSegmentForOutcome(wheelOutcome, segments);
+  const activeTier = option.tier || 1;
+
+  const resolved = resolveWheelOutcome(activeTier, wheelOutcome);
+  const granted = buildRewardGrant(resolved.payoutTier, wheelOutcome, activeTier);
+  pendingSpinResult = { wheelOutcome, activeTier, resolved, granted };
+
+  const prefersReduced =
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const durationMs = prefersReduced ? SPIN_DURATION_REDUCED_MS : SPIN_DURATION_FULL_MS;
+
+  let rewardFilled = false;
+  const rewardAtMs = Math.max(0, durationMs - SPIN_REWARD_LEAD_MS);
+  spinOverlayEarlyRewardTimer = setTimeout(() => {
+    spinOverlayEarlyRewardTimer = null;
+    fillSpinOverlayReward(wheelOutcome, activeTier, resolved, granted);
+    rewardFilled = true;
+  }, rewardAtMs);
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      positionSpinOverlayAnchor();
+      animateSpinner(selectedSegment, segments, durationMs, () => {
+        clearSpinOverlayEarlyRewardTimer();
+        if (!rewardFilled) {
+          fillSpinOverlayReward(wheelOutcome, activeTier, resolved, granted);
+        }
+        isSpinning = false;
+        saveState();
+        renderTierButtons();
+        clearSpinOverlayDismissTimer();
+        spinOverlayDismissTimer = setTimeout(() => {
+          spinOverlayDismissTimer = null;
+          dismissSpinOverlay();
+        }, SPIN_HOLD_AFTER_MS);
+      });
+    });
+  });
+}
+
+function resolveWheelOutcome(activeTier, wheelOutcome) {
+  if (wheelOutcome === 'T1') return { payoutTier: 'tier1', nearMiss: '' };
+  if (wheelOutcome === 'T2') {
+    return activeTier >= 2
+      ? { payoutTier: 'tier2', nearMiss: '' }
+      : { payoutTier: 'tier1', nearMiss: 'Near miss: Tier 2 not active.' };
+  }
+  if (wheelOutcome === 'T3') {
+    return activeTier >= 3
+      ? { payoutTier: 'tier3', nearMiss: '' }
+      : { payoutTier: highestActiveTier(activeTier), nearMiss: 'Near miss: Tier 3 not active.' };
+  }
+  if (wheelOutcome === 'BONUS') {
+    return { payoutTier: highestActiveTier(activeTier), nearMiss: '' };
+  }
+  if (wheelOutcome === 'MISS') {
+    return { payoutTier: null, nearMiss: 'Empty: no reward blocks earned.' };
+  }
+  return { payoutTier: 'tier1', nearMiss: '' };
+}
+
+function buildRewardGrant(sourceTier, wheelOutcome, activeTier) {
+  if (!sourceTier || wheelOutcome === 'MISS') {
+    return { sourceTier: null, blocks: 0, minutes: 0, text: 'No reward blocks earned.' };
+  }
+  const cfg = state.settings.rewards[sourceTier];
+  const blocks = cfg && cfg.blocks ? cfg.blocks : 0;
+  const text = cfg && cfg.text ? cfg.text : '';
+  return { sourceTier, blocks, minutes: blocks * 30, text };
+}
+
+function addRewardBlocks(grant, wheelOutcome, activeTier) {
+  if (!grant || !grant.blocks) return;
+  const earnedAt = new Date().toISOString();
+  for (let i = 0; i < grant.blocks; i++) {
+    state.rewardBlocks.push({
+      id: state.nextId++,
+      minutes: 30,
+      earnedAt,
+      sourceTier: grant.sourceTier,
+      wheelOutcome,
+      activeTier,
+    });
+  }
+}
+
+function spinBonusWheel() {
+  let r = Math.random(), cum = 0;
+  for (const { outcome, p } of BONUS_WHEEL) {
+    cum += p;
+    if (r < cum) return outcome;
+  }
+  return '75';
+}
+
+let pendingBonusTasks = [];
+let pendingBonusMessages = [];
+
+function openBonusFlow(activeTier, wheelOutcome, granted) {
+  pendingBonusTasks = [];
+  pendingBonusMessages = [
+    `Wheel landed Bonus. ${tierLabel(granted.sourceTier)} paid ${granted.blocks} reward block${granted.blocks !== 1 ? 's' : ''}.`,
+  ];
+  processBonusDraws(1, 0);
+  saveState();
+  showNextBonusTask();
+}
+
+function processBonusDraws(drawCount, depth) {
+  if (depth >= MAX_BONUS_CHAIN_DEPTH) return;
+  for (let i = 0; i < drawCount; i++) {
+    const outcome = spinBonusWheel();
+    state.bonusHistory.push({ id: state.nextId++, outcome, status: 'drawn', completedAt: new Date().toISOString() });
+    if (outcome === 'free') {
+      const clip = drawClip();
+      state.lastClipDrawn = clip;
+      state.pendingSpins++;
+      pendingBonusMessages.push(`FREE: drew ${clip} clip and added 1 pending spin.`);
+      state.bonusHistory.push({ id: state.nextId++, outcome, status: `free ${clip}`, completedAt: new Date().toISOString() });
+    } else if (outcome === 'extra') {
+      pendingBonusMessages.push('EXTRA: bonus wheel draws twice.');
+      processBonusDraws(2, depth + 1);
+    } else {
+      pendingBonusTasks.push(outcome);
+    }
+  }
+}
+
+function showNextBonusTask() {
+  const body = document.getElementById('bonus-body');
+  const messages = pendingBonusMessages.map(msg => `<div class="bonus-note">${esc(msg)}</div>`).join('');
+  const next = pendingBonusTasks[0];
+
+  if (!next) {
+    body.innerHTML = `
+      <div class="spin-tier">Bonus complete</div>
+      ${messages}
+      <button class="btn btn-solid btn-full mt16" id="bonus-close-btn">Done</button>
+    `;
+    document.getElementById('bonus-close-btn').addEventListener('click', () => {
+      hideSheet('bonus-sheet');
+      renderScreen(currentScreen);
+    });
+    showSheet('bonus-sheet');
+    return;
+  }
+
+  const minutes = { '75': '20-25', '50': '15', '25': '8' }[next];
+  body.innerHTML = `
+    <div class="spin-tier">Bonus ${next}%</div>
+    ${messages}
+    <div class="spin-text" style="margin:12px 0 20px;font-size:16px">
+      Complete roughly ${minutes} extra minutes to earn one extra clip and one extra pending spin.
+    </div>
+    <button class="btn btn-solid btn-full" id="bonus-done-btn">Done</button>
+    <button class="btn btn-outline btn-full mt8" id="bonus-skip-btn">Skip</button>
+  `;
+  document.getElementById('bonus-done-btn').addEventListener('click', completeBonusTask);
+  document.getElementById('bonus-skip-btn').addEventListener('click', skipBonusTask);
+  showSheet('bonus-sheet');
+}
+
+function completeBonusTask() {
+  const outcome = pendingBonusTasks.shift();
+  const clip = drawClip();
+  state.lastClipDrawn = clip;
+  state.pendingSpins++;
+  state.bonusHistory.push({ id: state.nextId++, outcome, status: `completed ${clip}`, completedAt: new Date().toISOString() });
+  pendingBonusMessages.push(`${outcome}% done: drew ${clip} clip and added 1 pending spin.`);
+  saveState();
+  showNextBonusTask();
+}
+
+function skipBonusTask() {
+  const outcome = pendingBonusTasks.shift();
+  state.bonusHistory.push({ id: state.nextId++, outcome, status: 'skipped', completedAt: new Date().toISOString() });
+  pendingBonusMessages.push(`${outcome}% skipped.`);
+  saveState();
+  showNextBonusTask();
 }
 
 /* ═══ SHEET MANAGEMENT ═══════════════════════════════════════════════════ */
@@ -701,20 +1657,43 @@ function showConfirm(msg, onConfirm) {
 
 /* ═══ SETTINGS SHEETS ════════════════════════════════════════════════════ */
 
-function openSpinCostSheet() {
-  document.getElementById('spin-cost-input').value = state.settings.spinCost;
-  showSheet('spin-cost-sheet');
+function openBlocksPerSpinSheet() {
+  document.getElementById('blocks-per-spin-input').value = state.settings.blocksPerSpin;
+  showSheet('blocks-per-spin-sheet');
 }
 
-function saveSpinCost() {
-  const v = parseInt(document.getElementById('spin-cost-input').value, 10);
+function saveBlocksPerSpin() {
+  const v = parseInt(document.getElementById('blocks-per-spin-input').value, 10);
   if (isNaN(v) || v < 1) return;
-  state.settings.spinCost = v;
+  state.settings.blocksPerSpin = v;
   saveState();
-  hideSheet('spin-cost-sheet');
+  hideSheet('blocks-per-spin-sheet');
   renderSettings();
   renderToday();
-  renderInventory();
+}
+
+function openClipBagSheet() {
+  for (const color of NORMAL_CLIPS) {
+    document.getElementById(`clip-bag-${color}`).value = state.clipBag.template[color] || 0;
+  }
+  document.getElementById('clip-bag-gold').value = state.clipBag.template.gold || 0;
+  document.getElementById('draw-mode-input').value = state.settings.drawMode || 'bag';
+  showSheet('clip-bag-sheet');
+}
+
+function saveClipBag() {
+  const template = {};
+  for (const color of CLIP_COLORS) {
+    const v = parseInt(document.getElementById(`clip-bag-${color}`).value, 10);
+    template[color] = !isNaN(v) && v >= 0 ? v : DEFAULT_CLIP_TEMPLATE[color];
+  }
+  state.settings.drawMode = document.getElementById('draw-mode-input').value || 'bag';
+  state.clipBag.template = normalizeClipTemplate(template);
+  state.clipBag.mode = state.settings.drawMode;
+  state.clipBag.remaining = [];
+  saveState();
+  hideSheet('clip-bag-sheet');
+  renderSettings();
 }
 
 function openCapSheet() {
@@ -766,7 +1745,8 @@ function openRewardsSheet() {
 
 function exportBackup(filename) {
   const fn   = filename || `habit-wheel-backup-${fmtTimestamp()}.json`;
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const exportedState = exportStateForBackup(state);
+  const blob = new Blob([JSON.stringify(exportedState, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url; a.download = fn; a.click();
@@ -778,9 +1758,10 @@ function importBackup(file) {
   reader.onload = e => {
     try {
       const imported = JSON.parse(e.target.result);
-      if (typeof imported !== 'object' || !imported.startDate) throw new Error('invalid');
+      if (!isValidState(imported)) throw new Error('invalid');
       showConfirm('Replace all current data with this backup?', () => {
-        state = { ...defaultState(), ...imported };
+        state = normalizeState(imported);
+        state.schemaVersion = SCHEMA_VERSION;
         saveState();
         renderScreen(currentScreen);
         renderSettings();
@@ -797,55 +1778,86 @@ function resetApp() {
     'This will erase all data. A backup will be downloaded first. Continue?',
     () => {
       exportBackup(`habit-wheel-backup-${fmtTimestamp()}.json`);
-      setTimeout(() => {
-        localStorage.removeItem(STORAGE_KEY);
-        location.reload();
-      }, 800);
+      localStorage.removeItem(STORAGE_KEY);
+      location.reload();
     }
   );
 }
 
-/* ═══ BULK SPEND SHEET ═══════════════════════════════════════════════════ */
+function addProductiveBlock(kind) {
+  const t = todayStr();
+  const byDate = kind === 'practice' ? state.practiceByDate : state.workoutByDate;
+  const totalKey = kind === 'practice' ? 'totalPracticeBlocks' : 'totalWorkoutBlocks';
 
-function openBulkSpend(preset) {
-  const inp = document.getElementById('bulk-count');
-  inp.value = preset != null ? preset : 1;
-  const n   = parseInt(inp.value, 10);
-  const capWarn = document.getElementById('bulk-cap-warn');
-  if (n > 0 && spentWeekMin() + n * 30 > state.settings.weeklyRewardCapMinutes) {
-    capWarn.classList.remove('hidden');
+  byDate[t] = (byDate[t] || 0) + 1;
+  state[totalKey]++;
+  const clip = drawClip();
+  state.lastClipDrawn = clip;
+  addProgressTowardSpin();
+  state.clipDrawsByDate = normalizeClipDraws(state.clipDrawsByDate);
+  state.clipDrawsByDate[t].push({
+    id: state.nextId++,
+    kind,
+    date: t,
+    clip,
+    createdAt: new Date().toISOString(),
+  });
+
+  saveState();
+  renderScreen(currentScreen);
+}
+
+function removeProductiveBlock(kind) {
+  const t = todayStr();
+  const byDate = kind === 'practice' ? state.practiceByDate : state.workoutByDate;
+  const totalKey = kind === 'practice' ? 'totalPracticeBlocks' : 'totalWorkoutBlocks';
+  const current = byDate[t] || 0;
+  if (current <= 0) return;
+
+  byDate[t] = current - 1;
+  state[totalKey] = Math.max(0, state[totalKey] - 1);
+  state.clipDrawsByDate = normalizeClipDraws(state.clipDrawsByDate);
+  const draws = state.clipDrawsByDate[t] || [];
+  const drawIndex = draws.map(draw => draw.kind).lastIndexOf(kind);
+
+  if (drawIndex >= 0) {
+    const [draw] = draws.splice(drawIndex, 1);
+    if ((state.clipInventory[draw.clip] || 0) > 0) {
+      state.clipInventory[draw.clip]--;
+    }
+    state.lastClipDrawn = draw.clip;
+    removeProgressTowardSpin();
+    saveState();
+    renderScreen(currentScreen);
   } else {
-    capWarn.classList.add('hidden');
+    saveState();
+    renderScreen(currentScreen);
+    alert('Removed the block. No same-day clip record was available to reverse.');
   }
-  showSheet('bulk-spend-sheet');
 }
 
 /* ═══ EVENT BINDING ══════════════════════════════════════════════════════ */
 
 function initEvents() {
-  // Bottom nav
-  document.querySelectorAll('.nav-btn').forEach(btn => {
-    btn.addEventListener('click', () => showScreen(btn.dataset.screen));
+  document.getElementById('today-date').addEventListener('click', () => showScreen('today'));
+  document.getElementById('top-progress-btn').addEventListener('click', () => showScreen('progress'));
+  document.getElementById('top-rewards-btn').addEventListener('click', () => showScreen('rewards'));
+  document.getElementById('top-settings-btn').addEventListener('click', () => showScreen('settings'));
+
+  document.querySelectorAll('[data-progress-range]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      progressRange = btn.dataset.progressRange;
+      renderProgress();
+    });
   });
 
   // Practice +/−
   document.getElementById('practice-plus').addEventListener('click', () => {
-    const t = todayStr();
-    state.practiceByDate[t] = (state.practiceByDate[t] || 0) + 1;
-    state.sharedTokens++;
-    state.totalPracticeBlocks++;
-    saveState(); renderToday();
+    addProductiveBlock('practice');
   });
 
   document.getElementById('practice-minus').addEventListener('click', () => {
-    const t = todayStr();
-    const b = state.practiceByDate[t] || 0;
-    if (b <= 0) return;
-    if (state.sharedTokens <= 0) { alert('Cannot remove — no shared tokens to subtract.'); return; }
-    state.practiceByDate[t] = b - 1;
-    state.sharedTokens      = Math.max(0, state.sharedTokens - 1);
-    state.totalPracticeBlocks = Math.max(0, state.totalPracticeBlocks - 1);
-    saveState(); renderToday();
+    removeProductiveBlock('practice');
   });
 
   // Questions +/−
@@ -868,83 +1880,22 @@ function initEvents() {
 
   // Workout +/−
   document.getElementById('workout-plus').addEventListener('click', () => {
-    const t = todayStr();
-    state.workoutByDate[t] = (state.workoutByDate[t] || 0) + 1;
-    state.sharedTokens++;
-    state.totalWorkoutBlocks++;
-    saveState(); renderToday();
+    addProductiveBlock('workout');
   });
 
   document.getElementById('workout-minus').addEventListener('click', () => {
-    const t = todayStr();
-    const b = state.workoutByDate[t] || 0;
-    if (b <= 0) return;
-    if (state.sharedTokens <= 0) { alert('Cannot remove — no shared tokens to subtract.'); return; }
-    state.workoutByDate[t] = b - 1;
-    state.sharedTokens     = Math.max(0, state.sharedTokens - 1);
-    state.totalWorkoutBlocks = Math.max(0, state.totalWorkoutBlocks - 1);
-    saveState(); renderToday();
+    removeProductiveBlock('workout');
   });
 
   // Status pill → deficit sheet
   document.getElementById('practice-status-pill').addEventListener('click', showDeficitSheet);
 
-  // Spin
-  document.getElementById('spin-btn').addEventListener('click', () => {
-    const btn = document.getElementById('spin-btn');
-    btn.disabled    = true;
-    btn.textContent = 'Spinning…';
-    setTimeout(doSpin, 500);
-  });
+  // Spin choices
+  document.getElementById('tier1-spin-btn').addEventListener('click', () => startSpin(1));
+  document.getElementById('tier2-spin-btn').addEventListener('click', () => startSpin(2));
+  document.getElementById('tier3-spin-btn').addEventListener('click', () => startSpin(3));
 
-  // Spin result sheet
-  document.getElementById('add-to-rewards-btn').addEventListener('click', addToRewards);
-  document.getElementById('discard-btn').addEventListener('click', discardSpin);
-
-  // Bonus sheet
-  document.getElementById('bonus-done-btn').addEventListener('click', handleBonusDone);
-  document.getElementById('bonus-skip-btn').addEventListener('click', handleBonusSkip);
-
-  // Spend single block
-  document.getElementById('spend-confirm-btn').addEventListener('click', confirmSpendBlock);
-  document.getElementById('spend-cancel-btn').addEventListener('click', () => {
-    pendingSpendId = null;
-    hideSheet('spend-confirm-sheet');
-  });
-
-  // Bulk spend
-  document.getElementById('spend-1-btn').addEventListener('click', () => {
-    if (!state.rewardBlocks.length) return;
-    openBulkSpend(1);
-  });
-  document.getElementById('spend-2-btn').addEventListener('click', () => {
-    if (state.rewardBlocks.length < 2) return;
-    openBulkSpend(2);
-  });
-  document.getElementById('spend-custom-btn').addEventListener('click', () => openBulkSpend(null));
-
-  document.getElementById('bulk-confirm').addEventListener('click', () => {
-    const n = parseInt(document.getElementById('bulk-count').value, 10);
-    if (isNaN(n) || n <= 0) return;
-    if (n > state.rewardBlocks.length) {
-      alert(`You only have ${state.rewardBlocks.length} block${state.rewardBlocks.length !== 1 ? 's' : ''} available.`);
-      return;
-    }
-    spendNBlocks(n);
-    hideSheet('bulk-spend-sheet');
-  });
-  document.getElementById('bulk-cancel').addEventListener('click', () => hideSheet('bulk-spend-sheet'));
-
-  // Update cap warning as user changes bulk-count input
-  document.getElementById('bulk-count').addEventListener('input', () => {
-    const n   = parseInt(document.getElementById('bulk-count').value, 10);
-    const el  = document.getElementById('bulk-cap-warn');
-    if (n > 0 && spentWeekMin() + n * 30 > state.settings.weeklyRewardCapMinutes) {
-      el.classList.remove('hidden');
-    } else {
-      el.classList.add('hidden');
-    }
-  });
+  document.getElementById('spend-selected-btn').addEventListener('click', spendSelectedBlocks);
 
   // Generic confirm sheet
   document.getElementById('confirm-ok').addEventListener('click', () => {
@@ -957,10 +1908,12 @@ function initEvents() {
   });
 
   // Settings rows
-  document.getElementById('set-spin-cost').addEventListener('click', openSpinCostSheet);
+  document.getElementById('set-blocks-per-spin').addEventListener('click', openBlocksPerSpinSheet);
+  document.getElementById('set-clip-bag').addEventListener('click', openClipBagSheet);
   document.getElementById('set-rewards').addEventListener('click', openRewardsSheet);
   document.getElementById('set-cap').addEventListener('click', openCapSheet);
-  document.getElementById('spin-cost-save').addEventListener('click', saveSpinCost);
+  document.getElementById('blocks-per-spin-save').addEventListener('click', saveBlocksPerSpin);
+  document.getElementById('clip-bag-save').addEventListener('click', saveClipBag);
   document.getElementById('cap-save').addEventListener('click', saveCap);
 
   document.getElementById('set-export').addEventListener('click', () => exportBackup());
@@ -973,6 +1926,13 @@ function initEvents() {
     e.target.value = '';
   });
   document.getElementById('set-reset').addEventListener('click', resetApp);
+
+  function syncSpinOverlayAnchorIfOpen() {
+    const ov = document.getElementById('spin-overlay');
+    if (ov && !ov.classList.contains('hidden')) positionSpinOverlayAnchor();
+  }
+  window.addEventListener('resize', syncSpinOverlayAnchorIfOpen);
+  window.addEventListener('scroll', syncSpinOverlayAnchorIfOpen, true);
 
   // data-close buttons (generic)
   document.querySelectorAll('[data-close]').forEach(btn => {

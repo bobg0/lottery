@@ -28,7 +28,8 @@ _Populate as you build — short repo map plus pointers to the source-of-truth f
 
 _Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
 
-## Product
+## Productpnpm install
+pnpm dev
 
 _Describe the high-level user-facing capabilities of this app once they exist._
 

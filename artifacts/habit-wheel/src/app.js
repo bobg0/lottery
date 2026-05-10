@@ -63,7 +63,7 @@ const SPINNER_CONFIG = {
 
 /** Must match timing used in startSpin for reward lead / hold. */
 const SPIN_DURATION_REDUCED_MS = 6000;
-const SPIN_DURATION_FULL_MS = 100000;
+const SPIN_DURATION_FULL_MS = 6000;
 const SPIN_REWARD_LEAD_MS = 800;
 const SPIN_HOLD_AFTER_MS = 1000;
 
@@ -386,7 +386,7 @@ function animateSpinner(selectedSegment, segments, durationMs, callback) {
 
   const t0 = performance.now();
 
-  const SLOW_END_POWER = prefersReduced ? 5 : 8;
+  const SLOW_END_POWER = prefersReduced ? 5 : 5;
 
   const easeProgress = (u) => {
     if (u <= 0) return 0;

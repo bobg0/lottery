@@ -25,7 +25,7 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - run: pnpm install
+      - run: pnpm install --no-frozen-lockfile
 
       - name: Compute BASE_PATH for GitHub Pages
         run: |

@@ -1317,10 +1317,6 @@ async function runCloudAction(action) {
     setCloudStatusMessage('Cloud backup not configured.');
     return;
   }
-  if (navigator.onLine === false) {
-    setCloudStatusMessage('Offline. Cloud sync will be available next time you are online.');
-    return;
-  }
 
   setCloudBusy(true);
   try {

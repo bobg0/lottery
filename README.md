@@ -88,12 +88,15 @@ BASE_PATH=/REPO_NAME/ pnpm run build
 
 Supabase cloud backup is optional. `localStorage` remains the primary working store, and the app still works without login or network access.
 
-- Login uses email magic link / OTP, so password reset is not needed.
+- Login uses email and password. The app no longer uses magic-link / OTP login for normal sign-in.
+- Supabase Auth sessions are persisted in browser storage, so the installed PWA should stay signed in until the user taps `Sign Out`.
 - Supabase stores one latest JSON state per user in `public.app_states`.
-- Sync runs manually with `Sync Now` or once per day after app load when signed in and online.
+- Sync runs after login, after app startup, after local changes with a debounce, when the app becomes visible, and at 10:30 PM / 11:40 PM local time while the app is open.
 - Progress date maps use max-merge so cumulative questions, practice, and workout data are preserved.
 - Consumables use newer-state-wins so spent clips, spins, and reward blocks are not resurrected.
 - Reward/spend records are unioned by stable ID when possible, and spent block IDs prevent available blocks from returning.
+
+If Supabase email confirmation is enabled, users may need to confirm their email once after sign-up before password login works. For a private/personal app, you can turn this off in `Authentication -> Providers -> Email -> Confirm email` to allow immediate sign-up/login.
 
 ### Supabase setup
 

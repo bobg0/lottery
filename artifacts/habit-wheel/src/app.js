@@ -1,5 +1,5 @@
 import {
-  getCurrentUser,
+  getCurrentSession,
   isCloudConfigured,
   isEffectivelyEmptyState,
   loadCloudState,
@@ -7,7 +7,8 @@ import {
   onAuthStateChange,
   saveCloudState,
   shouldDailySync,
-  signInWithOtp,
+  signInWithPassword,
+  signUpWithPassword,
   signOut as cloudSignOut,
   syncWithCloud,
 } from './cloudSync.js';
@@ -20,6 +21,7 @@ const CHALLENGE_DAYS = 40;
 const WO_WEEK_GOAL   = 8;
 const STORAGE_KEY    = 'habit_wheel_v2';
 const MIGRATION_BACKUP_KEY = 'habit_wheel_v2_pre_v3_migration_backup';
+const DATE_MIGRATION_BACKUP_KEY = 'habit_wheel_pre_local_date_migration_backup';
 const CLOUD_LOCAL_SNAPSHOT_KEY = 'habit_wheel_before_cloud_sync_backup';
 const SCHEMA_VERSION = 3;
 const NORMAL_CLIPS = ['red', 'blue', 'green', 'purple', 'orange'];
@@ -95,7 +97,36 @@ const SPINNER_TILE_LABELS = {
 /* ═══ Helpers ════════════════════════════════════════════════════════════ */
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  return localDateKey();
+}
+
+function localDateKey(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function parseLocalDateKey(dateStr) {
+  const [y, m, d] = String(dateStr || '').split('-').map(n => parseInt(n, 10));
+  if (!y || !m || !d) return new Date();
+  return new Date(y, m - 1, d);
+}
+
+function addDaysToKey(dateStr, days) {
+  const d = parseLocalDateKey(dateStr);
+  d.setDate(d.getDate() + days);
+  return localDateKey(d);
+}
+
+function dateKeyFromIso(isoStr) {
+  const d = new Date(isoStr);
+  return Number.isNaN(d.getTime()) ? todayStr() : localDateKey(d);
+}
+
+function isLocalDateKey(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) &&
+    localDateKey(parseLocalDateKey(value)) === value;
 }
 
 function weekStartStr() {
@@ -104,11 +135,11 @@ function weekStartStr() {
   const diff = day === 0 ? -6 : 1 - day;
   const mon  = new Date(d);
   mon.setDate(d.getDate() + diff);
-  return mon.toISOString().slice(0, 10);
+  return localDateKey(mon);
 }
 
 function daysBetween(aStr, bStr) {
-  return Math.floor((new Date(bStr) - new Date(aStr)) / 86400000);
+  return Math.floor((parseLocalDateKey(bStr) - parseLocalDateKey(aStr)) / 86400000);
 }
 
 function fmtDate(dateStr) {
@@ -171,19 +202,19 @@ function isValidIsoDate(value) {
 function getDatesInWeek(weekStart) {
   const dates = [];
   for (let i = 0; i < 7; i++) {
-    const d = new Date(weekStart);
+    const d = parseLocalDateKey(weekStart);
     d.setDate(d.getDate() + i);
-    dates.push(d.toISOString().slice(0, 10));
+    dates.push(localDateKey(d));
   }
   return dates;
 }
 
 function getDatesRange(startStr, endStr) {
   const dates = [];
-  const end = new Date(endStr);
-  const d   = new Date(startStr);
+  const end = parseLocalDateKey(endStr);
+  const d   = parseLocalDateKey(startStr);
   while (d <= end) {
-    dates.push(d.toISOString().slice(0, 10));
+    dates.push(localDateKey(d));
     d.setDate(d.getDate() + 1);
   }
   return dates;
@@ -443,10 +474,16 @@ function animateSpinner(selectedSegment, segments, durationMs, callback) {
 /* ═══ Default state ══════════════════════════════════════════════════════ */
 
 function defaultState() {
+  const today = todayStr();
   return {
-    startDate: todayStr(),
-    lastDate:  todayStr(),
+    startDate: today,
+    lastDate:  today,
+    activeDate: today,
     weekStart: weekStartStr(),
+    days: {
+      [today]: emptyDayRecord(today),
+    },
+    userId: null,
 
     clipInventory: emptyClipInventory(),
     clipBag: {
@@ -478,6 +515,11 @@ function defaultState() {
     updatedAt: nowIso(),
     lastCloudSyncAt: null,
     deviceId: makeDeviceId(),
+    sync: {
+      lastSyncedAt: null,
+      lastCloudUpdatedAt: null,
+      dirty: false,
+    },
 
     settings: {
       blocksPerSpin:          3,
@@ -494,11 +536,163 @@ function defaultState() {
   };
 }
 
+function emptyDayRecord(date) {
+  return {
+    date,
+    practiceMinutes: 0,
+    workoutMinutes: 0,
+    questionsDone: 0,
+    questionGoal: DAILY_Q_GOAL,
+    rewardBlocks: {},
+    updatedAt: nowIso(),
+  };
+}
+
 function emptyClipInventory() {
   return CLIP_COLORS.reduce((acc, color) => {
     acc[color] = 0;
     return acc;
   }, {});
+}
+
+function numericCount(value) {
+  const n = parseInt(value || 0, 10);
+  return !isNaN(n) && n > 0 ? n : 0;
+}
+
+function sumCountMap(map = {}) {
+  return Object.values(map || {}).reduce((sum, value) => sum + numericCount(value), 0);
+}
+
+function addCount(map, date, value) {
+  const count = numericCount(value);
+  if (!count || !isLocalDateKey(date)) return;
+  map[date] = (map[date] || 0) + count;
+}
+
+function assignAmbiguousCountsBeforeToday(map, values) {
+  const counts = (values || []).map(numericCount).filter(Boolean);
+  if (!counts.length) return;
+  const startOffset = counts.length;
+  counts.forEach((count, index) => {
+    const date = addDaysToKey(todayStr(), -(startOffset - index));
+    addCount(map, date, count);
+  });
+}
+
+function normalizeDateCountMap(source, legacyValues = []) {
+  const map = {};
+  const ambiguous = [];
+
+  if (source && typeof source === 'object' && !Array.isArray(source)) {
+    for (const [date, value] of Object.entries(source)) {
+      if (isLocalDateKey(date)) addCount(map, date, value);
+      else if (numericCount(value)) ambiguous.push(value);
+    }
+  } else if (Array.isArray(source)) {
+    for (const item of source) {
+      if (!item || typeof item !== 'object') continue;
+      const date = item.date || item.day || item.localDate || item.createdDate;
+      const value = item.value ?? item.count ?? item.blocks ?? item.questionsDone ?? 0;
+      if (isLocalDateKey(date)) addCount(map, date, value);
+      else if (numericCount(value)) ambiguous.push(value);
+    }
+  }
+
+  assignAmbiguousCountsBeforeToday(map, [...ambiguous, ...legacyValues]);
+  return map;
+}
+
+function moveLegacyTodayCountsToHistorical(input, targetState) {
+  if (input.activeDate) return;
+  const today = todayStr();
+  const targetDate = isLocalDateKey(input.lastDate) && input.lastDate !== today
+    ? input.lastDate
+    : addDaysToKey(today, -1);
+
+  for (const key of ['practiceByDate', 'workoutByDate', 'questionsByDate']) {
+    const map = targetState[key];
+    if (!map || !numericCount(map[today])) continue;
+    map[targetDate] = (map[targetDate] || 0) + numericCount(map[today]);
+    delete map[today];
+  }
+}
+
+function getLegacyCount(input, keys) {
+  for (const key of keys) {
+    if (input && input[key] != null) {
+      const count = numericCount(input[key]);
+      if (count) return count;
+    }
+  }
+  return 0;
+}
+
+function normalizeSync(input = {}) {
+  return {
+    lastSyncedAt: isValidIsoDate(input.lastSyncedAt) ? input.lastSyncedAt : null,
+    lastCloudUpdatedAt: isValidIsoDate(input.lastCloudUpdatedAt) ? input.lastCloudUpdatedAt : null,
+    dirty: Boolean(input.dirty),
+  };
+}
+
+function normalizeDays(inputDays = {}, sourceState = {}) {
+  const days = {};
+
+  if (inputDays && typeof inputDays === 'object' && !Array.isArray(inputDays)) {
+    for (const [date, record] of Object.entries(inputDays)) {
+      if (!isLocalDateKey(date) || !record || typeof record !== 'object') continue;
+      days[date] = {
+        ...emptyDayRecord(date),
+        ...record,
+        date,
+        practiceMinutes: numericCount(record.practiceMinutes),
+        workoutMinutes: numericCount(record.workoutMinutes),
+        questionsDone: numericCount(record.questionsDone),
+        updatedAt: isValidIsoDate(record.updatedAt) ? record.updatedAt : nowIso(),
+      };
+    }
+  }
+
+  const dates = new Set([
+    ...Object.keys(sourceState.practiceByDate || {}),
+    ...Object.keys(sourceState.workoutByDate || {}),
+    ...Object.keys(sourceState.questionsByDate || {}),
+    todayStr(),
+  ]);
+
+  for (const date of dates) {
+    if (!isLocalDateKey(date)) continue;
+    days[date] = {
+      ...(days[date] || emptyDayRecord(date)),
+      date,
+      practiceMinutes: numericCount(sourceState.practiceByDate && sourceState.practiceByDate[date]) * 30,
+      workoutMinutes: numericCount(sourceState.workoutByDate && sourceState.workoutByDate[date]) * 30,
+      questionsDone: numericCount(sourceState.questionsByDate && sourceState.questionsByDate[date]),
+      updatedAt: (days[date] && days[date].updatedAt) || nowIso(),
+    };
+  }
+
+  return days;
+}
+
+function syncDayRecordForDate(date, targetState = state) {
+  if (!isLocalDateKey(date)) return;
+  targetState.days = targetState.days || {};
+  const existing = targetState.days[date] || emptyDayRecord(date);
+  targetState.days[date] = {
+    ...existing,
+    date,
+    practiceMinutes: numericCount(targetState.practiceByDate && targetState.practiceByDate[date]) * 30,
+    workoutMinutes: numericCount(targetState.workoutByDate && targetState.workoutByDate[date]) * 30,
+    questionsDone: numericCount(targetState.questionsByDate && targetState.questionsByDate[date]),
+    updatedAt: nowIso(),
+  };
+}
+
+function syncAllDayRecords(targetState) {
+  targetState.days = normalizeDays(targetState.days, targetState);
+  syncDayRecordForDate(targetState.activeDate || todayStr(), targetState);
 }
 
 /* ═══ State persistence ══════════════════════════════════════════════════ */
@@ -509,7 +703,12 @@ function loadState() {
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw);
     const migrated = normalizeState(parsed, raw);
-    if (migrated.schemaVersion !== parsed.schemaVersion) {
+    if (
+      migrated.schemaVersion !== parsed.schemaVersion ||
+      migrated.activeDate !== parsed.activeDate ||
+      !parsed.days ||
+      !parsed.sync
+    ) {
       saveStateObject(migrated);
     }
     return migrated;
@@ -522,11 +721,19 @@ function touchState(targetState) {
   targetState.schemaVersion = SCHEMA_VERSION;
   targetState.updatedAt = nowIso();
   targetState.deviceId = targetState.deviceId || makeDeviceId();
+  targetState.sync = normalizeSync(targetState.sync);
 }
 
 function saveState(options = {}) {
   if (options.touch !== false) touchState(state);
+  if (options.dirty !== false) {
+    state.sync = normalizeSync(state.sync);
+    state.sync.dirty = true;
+  }
   saveStateObject(state);
+  if (options.scheduleSync !== false && options.dirty !== false) {
+    scheduleCloudSync('local-change');
+  }
 }
 
 function saveStateObject(nextState) {
@@ -535,6 +742,15 @@ function saveStateObject(nextState) {
 
 function normalizeState(input, rawBackup) {
   if (!input || typeof input !== 'object') return defaultState();
+
+  if (
+    rawBackup &&
+    input.schemaVersion === SCHEMA_VERSION &&
+    (!input.activeDate || !input.days || !input.sync) &&
+    !localStorage.getItem(DATE_MIGRATION_BACKUP_KEY)
+  ) {
+    localStorage.setItem(DATE_MIGRATION_BACKUP_KEY, rawBackup);
+  }
 
   if (input.schemaVersion === SCHEMA_VERSION) {
     return normalizeV3State(input);
@@ -549,6 +765,31 @@ function normalizeV3State(input) {
   s.settings = normalizeSettings(input.settings);
   s.clipInventory = normalizeClipInventory(input.clipInventory);
   s.clipBag = normalizeClipBag(input.clipBag, s.settings);
+  s.activeDate = todayStr();
+  s.startDate = isLocalDateKey(input.startDate) ? input.startDate : def.startDate;
+  s.lastDate = isLocalDateKey(input.lastDate) ? input.lastDate : s.activeDate;
+  s.weekStart = isLocalDateKey(input.weekStart) ? input.weekStart : weekStartStr();
+  s.practiceByDate = normalizeDateCountMap(input.practiceByDate, [
+    getLegacyCount(input, ['practiceBlocksToday', 'practiceBlocks', 'currentPracticeBlocks']),
+  ]);
+  s.workoutByDate = normalizeDateCountMap(input.workoutByDate, [
+    getLegacyCount(input, ['workoutBlocksToday', 'workoutBlocks', 'currentWorkoutBlocks']),
+  ]);
+  s.questionsByDate = normalizeDateCountMap(input.questionsByDate, [
+    getLegacyCount(input, ['questionsToday', 'questionsDone', 'currentQuestions']),
+  ]);
+  if (input.days && typeof input.days === 'object' && !Array.isArray(input.days)) {
+    for (const [date, record] of Object.entries(input.days)) {
+      if (!isLocalDateKey(date) || !record || typeof record !== 'object') continue;
+      const practiceBlocks = Math.floor(numericCount(record.practiceMinutes) / 30);
+      const workoutBlocks = Math.floor(numericCount(record.workoutMinutes) / 30);
+      const questions = numericCount(record.questionsDone);
+      if (practiceBlocks) s.practiceByDate[date] = Math.max(s.practiceByDate[date] || 0, practiceBlocks);
+      if (workoutBlocks) s.workoutByDate[date] = Math.max(s.workoutByDate[date] || 0, workoutBlocks);
+      if (questions) s.questionsByDate[date] = Math.max(s.questionsByDate[date] || 0, questions);
+    }
+  }
+  moveLegacyTodayCountsToHistorical(input, s);
   s.pendingSpins = Math.max(0, parseInt(input.pendingSpins || 0, 10) || 0);
   s.blocksTowardNextSpin = Math.max(0, parseInt(input.blocksTowardNextSpin || 0, 10) || 0);
   s.rewardBlocks = Array.isArray(input.rewardBlocks) ? input.rewardBlocks : [];
@@ -561,6 +802,16 @@ function normalizeV3State(input) {
   s.updatedAt = isValidIsoDate(input.updatedAt) ? input.updatedAt : (isValidIsoDate(input.lastUpdatedAt) ? input.lastUpdatedAt : def.updatedAt);
   s.lastCloudSyncAt = isValidIsoDate(input.lastCloudSyncAt) ? input.lastCloudSyncAt : null;
   s.deviceId = typeof input.deviceId === 'string' && input.deviceId.trim() ? input.deviceId : def.deviceId;
+  s.userId = typeof input.userId === 'string' && input.userId.trim() ? input.userId : null;
+  s.sync = normalizeSync({
+    ...(input.sync || {}),
+    lastSyncedAt: input.sync && input.sync.lastSyncedAt ? input.sync.lastSyncedAt : s.lastCloudSyncAt,
+  });
+  s.days = normalizeDays(input.days, s);
+  s.totalPracticeBlocks = Math.max(numericCount(input.totalPracticeBlocks), sumCountMap(s.practiceByDate));
+  s.totalWorkoutBlocks = Math.max(numericCount(input.totalWorkoutBlocks), sumCountMap(s.workoutByDate));
+  s.totalQuestions = Math.max(numericCount(input.totalQuestions), sumCountMap(s.questionsByDate));
+  syncDayRecordForDate(s.activeDate, s);
   return s;
 }
 
@@ -572,12 +823,19 @@ function migrateV2ToV3(input, rawBackup) {
   const def = defaultState();
   const s = {
     ...def,
-    startDate: input.startDate || def.startDate,
-    lastDate: input.lastDate || def.lastDate,
-    weekStart: input.weekStart || def.weekStart,
-    practiceByDate: input.practiceByDate || {},
-    workoutByDate: input.workoutByDate || {},
-    questionsByDate: input.questionsByDate || {},
+    startDate: isLocalDateKey(input.startDate) ? input.startDate : def.startDate,
+    lastDate: isLocalDateKey(input.lastDate) ? input.lastDate : def.lastDate,
+    activeDate: todayStr(),
+    weekStart: isLocalDateKey(input.weekStart) ? input.weekStart : weekStartStr(),
+    practiceByDate: normalizeDateCountMap(input.practiceByDate, [
+      getLegacyCount(input, ['practiceBlocksToday', 'practiceBlocks', 'currentPracticeBlocks']),
+    ]),
+    workoutByDate: normalizeDateCountMap(input.workoutByDate, [
+      getLegacyCount(input, ['workoutBlocksToday', 'workoutBlocks', 'currentWorkoutBlocks']),
+    ]),
+    questionsByDate: normalizeDateCountMap(input.questionsByDate, [
+      getLegacyCount(input, ['questionsToday', 'questionsDone', 'currentQuestions']),
+    ]),
     totalPracticeBlocks: input.totalPracticeBlocks || 0,
     totalWorkoutBlocks: input.totalWorkoutBlocks || 0,
     totalQuestions: input.totalQuestions || 0,
@@ -590,6 +848,8 @@ function migrateV2ToV3(input, rawBackup) {
     updatedAt: isValidIsoDate(input.updatedAt) ? input.updatedAt : def.updatedAt,
     lastCloudSyncAt: isValidIsoDate(input.lastCloudSyncAt) ? input.lastCloudSyncAt : null,
     deviceId: typeof input.deviceId === 'string' && input.deviceId.trim() ? input.deviceId : def.deviceId,
+    userId: typeof input.userId === 'string' && input.userId.trim() ? input.userId : null,
+    sync: normalizeSync(input.sync),
   };
 
   const oldTokens = Math.max(0, parseInt(input.sharedTokens || 0, 10) || 0);
@@ -702,9 +962,10 @@ let state = loadState();
 
 /* ═══ Computed values ════════════════════════════════════════════════════ */
 
-const getQToday        = ()  => state.questionsByDate[todayStr()] || 0;
-const getPracToday     = ()  => state.practiceByDate[todayStr()]  || 0;
-const getWorkToday     = ()  => state.workoutByDate[todayStr()]   || 0;
+const getActiveDateKey = () => state.activeDate || todayStr();
+const getQToday        = ()  => state.questionsByDate[getActiveDateKey()] || 0;
+const getPracToday     = ()  => state.practiceByDate[getActiveDateKey()]  || 0;
+const getWorkToday     = ()  => state.workoutByDate[getActiveDateKey()]   || 0;
 const getSpinsAvail    = ()  => state.pendingSpins || 0;
 
 function dayNumber() {
@@ -723,7 +984,7 @@ function getWeekWorkBlocks() {
 function rollingAvg(n) {
   const yd  = new Date();
   yd.setDate(yd.getDate() - 1);
-  const ydStr = yd.toISOString().slice(0, 10);
+  const ydStr = localDateKey(yd);
   if (ydStr < state.startDate) return null;
   const all   = getDatesRange(state.startDate, ydStr);
   const lastN = all.slice(-n);
@@ -732,16 +993,16 @@ function rollingAvg(n) {
 }
 
 function spentTodayMin() {
-  const t = todayStr();
+  const t = getActiveDateKey();
   return state.spentHistory
-    .filter(e => e.spentAt.startsWith(t))
+    .filter(e => dateKeyFromIso(e.spentAt) === t)
     .reduce((s, e) => s + e.minutesSpent, 0);
 }
 
 function spentWeekMin() {
   const dates = getDatesInWeek(state.weekStart);
   return state.spentHistory
-    .filter(e => dates.includes(e.spentAt.slice(0, 10)))
+    .filter(e => dates.includes(dateKeyFromIso(e.spentAt)))
     .reduce((s, e) => s + e.minutesSpent, 0);
 }
 
@@ -874,6 +1135,7 @@ function checkDateReset() {
   const today = todayStr();
   const ws    = weekStartStr();
   let changed = false;
+  if (state.activeDate !== today) { state.activeDate = today; changed = true; }
   if (state.lastDate !== today) { state.lastDate = today; changed = true; }
   if (state.weekStart !== ws)   { state.weekStart = ws; changed = true; }
 
@@ -881,7 +1143,15 @@ function checkDateReset() {
   state.clipDrawsByDate = normalizeClipDraws(state.clipDrawsByDate);
   if (JSON.stringify(state.clipDrawsByDate || {}) !== beforeDraws) changed = true;
 
-  if (changed) saveState({ touch: false });
+  if (!state.days || !state.days[today]) {
+    syncDayRecordForDate(today);
+    changed = true;
+  }
+
+  if (changed) {
+    saveState({ touch: false });
+    renderScreen(currentScreen);
+  }
 }
 
 /* ═══ Screen navigation ══════════════════════════════════════════════════ */
@@ -931,7 +1201,8 @@ function renderScreen(name) {
 /* ═══ TODAY ══════════════════════════════════════════════════════════════ */
 
 function renderToday() {
-  const d = new Date();
+  checkDateReset();
+  const d = parseLocalDateKey(getActiveDateKey());
   document.getElementById('today-date').textContent =
     d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
@@ -996,17 +1267,17 @@ function renderProgress() {
 }
 
 function getProgressRangeData() {
-  const today = todayStr();
+  const today = getActiveDateKey();
   const now = new Date();
   let start = state.startDate;
 
   if (progressRange === 'week') {
     start = maxDateStr(state.startDate, weekStartStr());
   } else if (progressRange === 'month') {
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const monthStart = localDateKey(new Date(now.getFullYear(), now.getMonth(), 1));
     start = maxDateStr(state.startDate, monthStart);
   } else if (progressRange === 'ytd') {
-    const yearStart = new Date(now.getFullYear(), 0, 1).toISOString().slice(0, 10);
+    const yearStart = localDateKey(new Date(now.getFullYear(), 0, 1));
     start = maxDateStr(state.startDate, yearStart);
   }
 
@@ -1020,7 +1291,7 @@ function sumByDate(source, dates) {
 function getSpentBlocksByDate(history) {
   return (history || []).reduce((acc, entry) => {
     if (!entry || !entry.spentAt) return acc;
-    const date = String(entry.spentAt).slice(0, 10);
+    const date = dateKeyFromIso(entry.spentAt);
     const blocks = Math.max(0, parseInt(entry.blocksSpent || 0, 10) || 0);
     if (!blocks) return acc;
     acc[date] = (acc[date] || 0) + blocks;
@@ -1149,7 +1420,7 @@ function renderSpentHistory() {
   // Group by date (newest first)
   const grouped = {};
   for (const e of [...state.spentHistory].reverse()) {
-    const ds = e.spentAt.slice(0, 10);
+    const ds = dateKeyFromIso(e.spentAt);
     if (!grouped[ds]) grouped[ds] = [];
     grouped[ds].push(e);
   }
@@ -1211,6 +1482,12 @@ function renderSettings() {
 let cloudRenderNonce = 0;
 let cloudStatusMessage = '';
 let pendingCloudChoiceState = null;
+let cloudAuthReady = !isCloudConfigured();
+let cloudUser = null;
+let cloudSyncTimer = null;
+let cloudSyncInFlight = false;
+let cloudSyncQueued = false;
+let scheduledCloudSyncTimers = [];
 
 function setCloudStatusMessage(message) {
   cloudStatusMessage = message || '';
@@ -1225,6 +1502,9 @@ function setCloudPane(id, visible) {
 function setCloudBusy(isBusy) {
   [
     'cloud-login-btn',
+    'cloud-signup-btn',
+    'cloud-password-input',
+    'cloud-email-input',
     'cloud-sync-btn',
     'cloud-load-btn',
     'cloud-save-btn',
@@ -1263,10 +1543,16 @@ async function renderCloudBackupSection() {
     return;
   }
 
-  if (statusEl) statusEl.textContent = cloudStatusMessage || 'Checking cloud backup...';
+  if (!cloudAuthReady) {
+    setCloudPane('cloud-not-configured', false);
+    setCloudPane('cloud-signed-out', false);
+    setCloudPane('cloud-signed-in', false);
+    if (statusEl) statusEl.textContent = 'Checking cloud session...';
+    return;
+  }
 
   try {
-    const user = await getCurrentUser();
+    const user = cloudUser;
     if (nonce !== cloudRenderNonce) return;
 
     setCloudPane('cloud-not-configured', false);
@@ -1279,7 +1565,7 @@ async function renderCloudBackupSection() {
     }
 
     document.getElementById('cloud-signed-in-email').textContent = user.email || user.id;
-    document.getElementById('cloud-last-sync').textContent = fmtCloudTime(state.lastCloudSyncAt);
+    document.getElementById('cloud-last-sync').textContent = fmtCloudTime((state.sync && state.sync.lastSyncedAt) || state.lastCloudSyncAt);
     if (statusEl) statusEl.textContent = cloudStatusMessage || 'Cloud Backup: Signed in';
   } catch (err) {
     if (nonce !== cloudRenderNonce) return;
@@ -1304,9 +1590,14 @@ function saveLocalCloudSnapshot(reason) {
 
 function applySyncedState(nextState, reason) {
   saveLocalCloudSnapshot(reason);
-  state = normalizeState(nextState);
+  state = normalizeState({
+    ...nextState,
+    userId: cloudUser ? cloudUser.id : nextState.userId,
+  });
   state.schemaVersion = SCHEMA_VERSION;
-  saveState({ touch: false });
+  state.sync = normalizeSync(state.sync);
+  state.sync.dirty = false;
+  saveState({ touch: false, dirty: false, scheduleSync: false });
   selectedRewardBlockIds.clear();
   renderScreen(currentScreen);
   renderSettings();
@@ -1332,18 +1623,50 @@ async function runCloudAction(action) {
 async function handleCloudLogin() {
   await runCloudAction(async () => {
     const email = document.getElementById('cloud-email-input').value.trim();
-    if (!email) {
-      setCloudStatusMessage('Enter an email first.');
+    const password = document.getElementById('cloud-password-input').value;
+    if (!email || !password) {
+      setCloudStatusMessage('Enter email and password first.');
       return;
     }
-    await signInWithOtp(email);
-    setCloudStatusMessage('Login link sent. Check your email on this device.');
+    const data = await signInWithPassword(email, password);
+    cloudUser = (data.session && data.session.user) || data.user || null;
+    cloudAuthReady = true;
+    const synced = await syncAfterAuth('login');
+    if (synced) setCloudStatusMessage('Logged in and synced.');
+  });
+}
+
+async function handleCloudSignUp() {
+  await runCloudAction(async () => {
+    const email = document.getElementById('cloud-email-input').value.trim();
+    const password = document.getElementById('cloud-password-input').value;
+    if (!email || !password) {
+      setCloudStatusMessage('Enter email and password first.');
+      return;
+    }
+    if (password.length < 6) {
+      setCloudStatusMessage('Password must be at least 6 characters.');
+      return;
+    }
+    const data = await signUpWithPassword(email, password);
+    cloudUser = data.session ? data.session.user : null;
+    cloudAuthReady = true;
+    if (data.session) {
+      const synced = await syncAfterAuth('signup');
+      if (synced) setCloudStatusMessage('Account created and synced.');
+    } else {
+      setCloudStatusMessage('Account created. If confirmation is enabled, confirm your email, then log in here.');
+    }
   });
 }
 
 async function handleCloudSignOut() {
   await runCloudAction(async () => {
     await cloudSignOut();
+    cloudUser = null;
+    cloudAuthReady = true;
+    state.userId = null;
+    saveState({ touch: false, dirty: false, scheduleSync: false });
     setCloudStatusMessage('Signed out of cloud backup.');
   });
 }
@@ -1378,14 +1701,7 @@ async function overwriteCloudWithLocalChoice() {
 
 async function handleCloudSyncNow() {
   await runCloudAction(async () => {
-    const result = await syncWithCloud(state);
-    if (result.needsChoice) {
-      showCloudChoiceSheet(result.cloudState);
-      setCloudStatusMessage('Cloud backup found. Choose whether to load it or keep local.');
-      return;
-    }
-    applySyncedState(result.state, 'before-cloud-sync');
-    setCloudStatusMessage(result.action === 'merged' ? 'Synced local and cloud state.' : 'Saved local state to cloud.');
+    await performCloudSync({ reason: 'manual-sync', force: true, interactive: true });
   });
 }
 
@@ -1409,28 +1725,148 @@ async function handleLoadCloudBackup() {
 
 async function handleSaveLocalToCloud() {
   await runCloudAction(async () => {
+    if (cloudUser) state.userId = cloudUser.id;
     const saved = await saveCloudState(state);
     applySyncedState(saved, 'before-cloud-save');
     setCloudStatusMessage('Local state saved to cloud.');
   });
 }
 
-async function maybeRunDailyCloudSync() {
-  if (!isCloudConfigured() || navigator.onLine === false || !shouldDailySync(state)) return;
+function scheduleCloudSync(reason, delayMs = 1800) {
+  if (!isCloudConfigured() || !cloudAuthReady || !cloudUser) return;
+  if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(() => {
+    cloudSyncTimer = null;
+    performCloudSync({ reason, force: false, interactive: false });
+  }, delayMs);
+}
 
+async function performCloudSync({ reason, force = false, interactive = false } = {}) {
+  if (!isCloudConfigured() || !cloudAuthReady || !cloudUser) return false;
+  if (navigator.onLine === false) return false;
+  if (!force && !(state.sync && state.sync.dirty) && !shouldDailySync(state)) return false;
+
+  if (cloudSyncInFlight) {
+    cloudSyncQueued = true;
+    return false;
+  }
+
+  cloudSyncInFlight = true;
   try {
-    const user = await getCurrentUser();
-    if (!user) return;
+    checkDateReset();
+    state.userId = cloudUser.id;
     const result = await syncWithCloud(state);
     if (result.needsChoice) {
-      showCloudChoiceSheet(result.cloudState);
-      setCloudStatusMessage('Cloud backup found. Choose whether to load it or keep local.');
-      return;
+      if (interactive || isEffectivelyEmptyState(state)) {
+        showCloudChoiceSheet(result.cloudState);
+        setCloudStatusMessage('Cloud backup found. Choose whether to load it or keep local.');
+      }
+      return false;
     }
-    applySyncedState(result.state, 'before-daily-cloud-sync');
-    setCloudStatusMessage('Daily cloud sync complete.');
+    applySyncedState(result.state, `before-${reason || 'cloud-sync'}`);
+    if (interactive) {
+      setCloudStatusMessage(result.action === 'merged' ? 'Synced local and cloud state.' : 'Saved local state to cloud.');
+    }
+    return true;
   } catch (err) {
-    setCloudStatusMessage(`Cloud error: ${err.message || 'Daily sync skipped.'}`);
+    if (interactive) {
+      setCloudStatusMessage(`Cloud error: ${err.message || 'Sync failed.'}`);
+    } else {
+      cloudStatusMessage = `Cloud error: ${err.message || 'Sync skipped.'}`;
+      renderCloudBackupSection();
+    }
+    return false;
+  } finally {
+    cloudSyncInFlight = false;
+    if (cloudSyncQueued) {
+      cloudSyncQueued = false;
+      scheduleCloudSync('queued-sync', 600);
+    }
+  }
+}
+
+async function syncAfterAuth(reason) {
+  cloudAuthReady = true;
+  if (cloudUser) {
+    state.userId = cloudUser.id;
+    saveState({ touch: false, dirty: false, scheduleSync: false });
+    const synced = await performCloudSync({ reason: `after-${reason}`, force: true, interactive: true });
+    renderCloudBackupSection();
+    return synced;
+  }
+  renderCloudBackupSection();
+  return false;
+}
+
+async function initializeCloudAuth() {
+  if (!isCloudConfigured()) {
+    cloudAuthReady = true;
+    renderCloudBackupSection();
+    return;
+  }
+
+  cloudAuthReady = false;
+  renderCloudBackupSection();
+
+  try {
+    const session = await getCurrentSession();
+    cloudUser = session ? session.user : null;
+    cloudAuthReady = true;
+    if (cloudUser) {
+      await syncAfterAuth('startup');
+    } else {
+      renderCloudBackupSection();
+    }
+  } catch (err) {
+    cloudAuthReady = true;
+    cloudUser = null;
+    setCloudStatusMessage(`Cloud error: ${err.message || 'Unable to check session.'}`);
+  }
+
+  onAuthStateChange((user) => {
+    cloudUser = user;
+    cloudAuthReady = true;
+    if (user) {
+      syncAfterAuth('auth-change');
+    } else {
+      renderCloudBackupSection();
+    }
+  });
+}
+
+function runVisibilitySync() {
+  checkDateReset();
+  if (document.visibilityState === 'visible') {
+    performCloudSync({ reason: 'visible', force: Boolean(state.sync && state.sync.dirty), interactive: false });
+    scheduleDailyCloudSyncTimers();
+  } else {
+    performCloudSync({ reason: 'hidden', force: Boolean(state.sync && state.sync.dirty), interactive: false });
+  }
+}
+
+function minutesUntilNextLocalTime(hour, minute) {
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(hour, minute, 0, 0);
+  if (target <= now) target.setDate(target.getDate() + 1);
+  return target.getTime() - now.getTime();
+}
+
+function scheduleDailyCloudSyncTimers() {
+  scheduledCloudSyncTimers.forEach(timer => clearTimeout(timer));
+  scheduledCloudSyncTimers = [];
+
+  const targets = [
+    [22, 30], // 90 minutes before local midnight
+    [23, 40], // 20 minutes before local midnight
+  ];
+
+  for (const [hour, minute] of targets) {
+    const timer = setTimeout(() => {
+      performCloudSync({ reason: 'scheduled', force: true, interactive: false });
+      scheduleDailyCloudSyncTimers();
+    }, minutesUntilNextLocalTime(hour, minute));
+    scheduledCloudSyncTimers.push(timer);
   }
 }
 
@@ -2032,7 +2468,8 @@ function resetApp() {
 }
 
 function addProductiveBlock(kind) {
-  const t = todayStr();
+  checkDateReset();
+  const t = getActiveDateKey();
   const byDate = kind === 'practice' ? state.practiceByDate : state.workoutByDate;
   const totalKey = kind === 'practice' ? 'totalPracticeBlocks' : 'totalWorkoutBlocks';
 
@@ -2049,13 +2486,15 @@ function addProductiveBlock(kind) {
     clip,
     createdAt: new Date().toISOString(),
   });
+  syncDayRecordForDate(t);
 
   saveState();
   renderScreen(currentScreen);
 }
 
 function removeProductiveBlock(kind) {
-  const t = todayStr();
+  checkDateReset();
+  const t = getActiveDateKey();
   const byDate = kind === 'practice' ? state.practiceByDate : state.workoutByDate;
   const totalKey = kind === 'practice' ? 'totalPracticeBlocks' : 'totalWorkoutBlocks';
   const current = byDate[t] || 0;
@@ -2074,9 +2513,11 @@ function removeProductiveBlock(kind) {
     }
     state.lastClipDrawn = draw.clip;
     removeProgressTowardSpin();
+    syncDayRecordForDate(t);
     saveState();
     renderScreen(currentScreen);
   } else {
+    syncDayRecordForDate(t);
     saveState();
     renderScreen(currentScreen);
     alert('Removed the block. No same-day clip record was available to reverse.');
@@ -2109,19 +2550,23 @@ function initEvents() {
 
   // Questions +/−
   document.getElementById('q-plus2').addEventListener('click', () => {
-    const t = todayStr();
+    checkDateReset();
+    const t = getActiveDateKey();
     state.questionsByDate[t] = (state.questionsByDate[t] || 0) + 2;
     state.totalQuestions += 2;
+    syncDayRecordForDate(t);
     saveState(); renderToday();
   });
 
   document.getElementById('q-minus2').addEventListener('click', () => {
-    const t   = todayStr();
+    checkDateReset();
+    const t   = getActiveDateKey();
     const cur = state.questionsByDate[t] || 0;
     if (cur <= 0) return;
     const sub = Math.min(2, cur);
     state.questionsByDate[t]  = cur - sub;
     state.totalQuestions      = Math.max(0, state.totalQuestions - sub);
+    syncDayRecordForDate(t);
     saveState(); renderToday();
   });
 
@@ -2175,7 +2620,11 @@ function initEvents() {
   document.getElementById('set-reset').addEventListener('click', resetApp);
 
   document.getElementById('cloud-login-btn').addEventListener('click', handleCloudLogin);
+  document.getElementById('cloud-signup-btn').addEventListener('click', handleCloudSignUp);
   document.getElementById('cloud-email-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') handleCloudLogin();
+  });
+  document.getElementById('cloud-password-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') handleCloudLogin();
   });
   document.getElementById('cloud-sync-btn').addEventListener('click', handleCloudSyncNow);
@@ -2211,11 +2660,11 @@ document.addEventListener('DOMContentLoaded', () => {
   checkDateReset();
   initEvents();
   showScreen('today');
-  if (isCloudConfigured()) {
-    onAuthStateChange(() => {
-      renderCloudBackupSection();
-      maybeRunDailyCloudSync();
-    });
-    maybeRunDailyCloudSync();
-  }
+  initializeCloudAuth();
+  scheduleDailyCloudSyncTimers();
+  setInterval(checkDateReset, 60000);
+  document.addEventListener('visibilitychange', runVisibilitySync);
+  window.addEventListener('pagehide', () => {
+    performCloudSync({ reason: 'pagehide', force: Boolean(state.sync && state.sync.dirty), interactive: false });
+  });
 });

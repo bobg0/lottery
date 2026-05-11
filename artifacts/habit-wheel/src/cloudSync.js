@@ -29,6 +29,13 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function localDateKey(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function makeDeviceId() {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
     return globalThis.crypto.randomUUID();
@@ -143,7 +150,15 @@ function withCloudFields(state, markSynced = false) {
   next.schemaVersion = next.schemaVersion || CURRENT_SCHEMA_VERSION;
   next.deviceId = next.deviceId || makeDeviceId();
   next.updatedAt = markSynced ? now : (next.updatedAt || now);
-  if (markSynced) next.lastCloudSyncAt = now;
+  next.sync = {
+    ...(next.sync || {}),
+    dirty: markSynced ? false : Boolean(next.sync && next.sync.dirty),
+  };
+  if (markSynced) {
+    next.lastCloudSyncAt = now;
+    next.sync.lastSyncedAt = now;
+    next.sync.lastCloudUpdatedAt = now;
+  }
   return next;
 }
 
@@ -154,26 +169,35 @@ export function isCloudConfigured() {
 export function getSupabaseClient() {
   if (!isCloudConfigured()) return null;
   if (!supabaseClient) {
+    const auth = {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false,
+    };
+    if (typeof window !== 'undefined' && window.localStorage) {
+      auth.storage = window.localStorage;
+    }
     supabaseClient = createClient(env('VITE_SUPABASE_URL'), env('VITE_SUPABASE_ANON_KEY'), {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-      },
+      auth,
     });
   }
   return supabaseClient;
 }
 
-export async function signInWithOtp(email) {
+export async function signUpWithPassword(email, password) {
   const supabase = getSupabaseClient();
   if (!supabase) throw new Error('Cloud backup is not configured.');
-  const redirectTo = `${window.location.origin}${window.location.pathname}`;
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: redirectTo },
-  });
+  const { data, error } = await supabase.auth.signUp({ email, password });
   if (error) throw error;
+  return data;
+}
+
+export async function signInWithPassword(email, password) {
+  const supabase = getSupabaseClient();
+  if (!supabase) throw new Error('Cloud backup is not configured.');
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data;
 }
 
 export async function signOut() {
@@ -183,12 +207,17 @@ export async function signOut() {
   if (error) throw error;
 }
 
-export async function getCurrentUser() {
+export async function getCurrentSession() {
   const supabase = getSupabaseClient();
   if (!supabase) return null;
   const { data, error } = await supabase.auth.getSession();
   if (error) throw error;
-  return data.session ? data.session.user : null;
+  return data.session || null;
+}
+
+export async function getCurrentUser() {
+  const session = await getCurrentSession();
+  return session ? session.user : null;
 }
 
 export function onAuthStateChange(callback) {
@@ -223,6 +252,7 @@ export async function saveCloudState(state) {
   if (!user) throw new Error('Sign in before using cloud backup.');
 
   const stateToSave = markCloudSync(state);
+  stateToSave.userId = user.id;
   const { error } = await supabase
     .from(TABLE_NAME)
     .upsert({
@@ -239,6 +269,10 @@ export async function syncWithCloud(localState) {
   const cloudState = await loadCloudState();
   const localEmpty = isEffectivelyEmptyState(localState);
   const cloudEmpty = isEffectivelyEmptyState(cloudState);
+
+  if (localEmpty && (!cloudState || cloudEmpty)) {
+    return { action: 'empty-noop', state: withCloudFields(localState, false), cloudState };
+  }
 
   if (!cloudState || cloudEmpty) {
     const saved = await saveCloudState(localState);
@@ -284,6 +318,8 @@ export function mergeLocalAndCloud(localState, cloudState) {
     startDate: earliestDate(local.startDate, cloud.startDate),
     lastDate: latestDate(local.lastDate, cloud.lastDate),
     weekStart: local.weekStart || cloud.weekStart,
+    activeDate: localDateKey(),
+    userId: local.userId || cloud.userId || null,
   };
 
   for (const field of PROGRESS_FIELDS) {
@@ -340,6 +376,11 @@ export function mergeLocalAndCloud(localState, cloudState) {
     nextIdFromArrays(merged.rewardBlocks, merged.spentHistory, merged.discardedHistory, merged.bonusHistory)
   );
   merged.updatedAt = nowIso();
+  merged.sync = {
+    ...(cloud.sync || {}),
+    ...(local.sync || {}),
+    dirty: true,
+  };
   return merged;
 }
 
@@ -360,8 +401,11 @@ function nextIdFromArrays(...arrays) {
 
 export function shouldDailySync(state) {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
-  const last = state && state.lastCloudSyncAt ? String(state.lastCloudSyncAt).slice(0, 10) : '';
-  return last !== new Date().toISOString().slice(0, 10);
+  const lastSync = state && state.sync && state.sync.lastSyncedAt
+    ? state.sync.lastSyncedAt
+    : state && state.lastCloudSyncAt;
+  const last = lastSync ? localDateKey(new Date(lastSync)) : '';
+  return last !== localDateKey();
 }
 
 export function markCloudSync(state) {
@@ -373,6 +417,14 @@ export function isEffectivelyEmptyState(state) {
   if (sumDateMap(state.questionsByDate) > 0) return false;
   if (sumDateMap(state.practiceByDate) > 0) return false;
   if (sumDateMap(state.workoutByDate) > 0) return false;
+  if (state.days && typeof state.days === 'object') {
+    for (const record of Object.values(state.days)) {
+      if (!record || typeof record !== 'object') continue;
+      if (numberValue(record.practiceMinutes) > 0) return false;
+      if (numberValue(record.workoutMinutes) > 0) return false;
+      if (numberValue(record.questionsDone) > 0) return false;
+    }
+  }
   if (numberValue(state.totalQuestions) > 0) return false;
   if (numberValue(state.totalPracticeBlocks) > 0) return false;
   if (numberValue(state.totalWorkoutBlocks) > 0) return false;

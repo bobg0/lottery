@@ -412,6 +412,15 @@
     .settings-sub { font-size: 12px; margin-top: 2px; }
     .settings-row.danger { color: var(--danger); }
     .s-chevron { color: var(--muted); font-size: 20px; line-height: 1; }
+    .cloud-card .form-input { margin-bottom: 8px; }
+    .cloud-status { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+    .cloud-note { font-size: 12px; line-height: 1.45; color: var(--muted); margin-top: 8px; }
+    .cloud-actions { display: grid; gap: 8px; }
+    .cloud-actions .btn { min-height: 42px; }
+    .cloud-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; font-size: 14px; border-bottom: 1px solid var(--border); }
+    .cloud-row:last-of-type { border-bottom: none; }
+    .cloud-row span:first-child { color: var(--muted); }
+    .cloud-row strong { text-align: right; overflow-wrap: anywhere; }
 
     .sheet-overlay {
       position: fixed;
@@ -636,6 +645,28 @@
       <div class="settings-row nb danger" id="set-reset"><div><div>Reset app</div><div class="settings-sub">Downloads a timestamped backup first.</div></div><span class="s-chevron">›</span></div>
     </div>
     <div class="info-card card">Data is stored locally on this device.</div>
+    <div class="card cloud-card" id="cloud-backup-card">
+      <div class="card-label">Cloud Backup</div>
+      <div class="cloud-status" id="cloud-status">Checking cloud backup...</div>
+      <div id="cloud-not-configured" class="hidden">
+        <div class="cloud-note">Cloud backup not configured.</div>
+      </div>
+      <div id="cloud-signed-out" class="hidden">
+        <input class="form-input" type="email" id="cloud-email-input" inputmode="email" autocomplete="email" placeholder="Email" />
+        <button class="btn btn-solid btn-full" id="cloud-login-btn">Send Login Link</button>
+        <div class="cloud-note">Cloud backup stores one latest copy of your app state. The app still works offline.</div>
+      </div>
+      <div id="cloud-signed-in" class="hidden">
+        <div class="cloud-row"><span>Signed in as</span><strong id="cloud-signed-in-email">-</strong></div>
+        <div class="cloud-row"><span>Last cloud sync</span><strong id="cloud-last-sync">Never</strong></div>
+        <div class="cloud-actions mt12">
+          <button class="btn btn-solid btn-full" id="cloud-sync-btn">Sync Now</button>
+          <button class="btn btn-outline btn-full" id="cloud-load-btn">Load Cloud Backup</button>
+          <button class="btn btn-outline btn-full" id="cloud-save-btn">Save Local to Cloud</button>
+          <button class="btn btn-outline btn-full" id="cloud-signout-btn">Sign Out</button>
+        </div>
+      </div>
+    </div>
   </section>
 </div>
 
@@ -695,6 +726,15 @@
   <div class="sheet-box"><div class="sheet-handle"></div><div class="sheet-body">
     <div class="sheet-title-lg" id="confirm-msg">Are you sure?</div>
     <div class="btn-pair mt16"><button class="btn btn-outline" id="confirm-cancel">Cancel</button><button class="btn btn-danger" id="confirm-ok">Confirm</button></div>
+  </div></div>
+</div>
+
+<div id="cloud-choice-sheet" class="sheet-overlay hidden">
+  <div class="sheet-box"><div class="sheet-handle"></div><div class="sheet-body">
+    <div class="sheet-title-lg">Cloud backup found. Load it onto this device?</div>
+    <div class="cloud-note mt8">Loading replaces this device's empty local state. Keeping local overwrites the cloud copy.</div>
+    <button class="btn btn-solid btn-full mt16" id="cloud-choice-load">Load Cloud Backup</button>
+    <button class="btn btn-outline btn-full mt8" id="cloud-choice-overwrite">Keep Local and Overwrite Cloud</button>
   </div></div>
 </div>
 

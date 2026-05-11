@@ -1,3 +1,17 @@
+import {
+  getCurrentUser,
+  isCloudConfigured,
+  isEffectivelyEmptyState,
+  loadCloudState,
+  markCloudSync,
+  onAuthStateChange,
+  saveCloudState,
+  shouldDailySync,
+  signInWithOtp,
+  signOut as cloudSignOut,
+  syncWithCloud,
+} from './cloudSync.js';
+
 /* ═══ Habit Wheel v3 ══════════════════════════════════════════════════════ */
 
 const DAILY_Q_GOAL   = 10;
@@ -6,8 +20,8 @@ const CHALLENGE_DAYS = 40;
 const WO_WEEK_GOAL   = 8;
 const STORAGE_KEY    = 'habit_wheel_v2';
 const MIGRATION_BACKUP_KEY = 'habit_wheel_v2_pre_v3_migration_backup';
+const CLOUD_LOCAL_SNAPSHOT_KEY = 'habit_wheel_before_cloud_sync_backup';
 const SCHEMA_VERSION = 3;
-const EXPORT_DETAILS_DAYS = 2;
 const NORMAL_CLIPS = ['red', 'blue', 'green', 'purple', 'orange'];
 const GOLD_CLIP = 'gold';
 const CLIP_COLORS = [...NORMAL_CLIPS, GOLD_CLIP];
@@ -137,6 +151,21 @@ function fmtTimestamp() {
   const H = String(now.getHours()).padStart(2, '0');
   const M = String(now.getMinutes()).padStart(2, '0');
   return `${todayStr()}-${H}${M}`;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function makeDeviceId() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function isValidIsoDate(value) {
+  return typeof value === 'string' && !Number.isNaN(Date.parse(value));
 }
 
 function getDatesInWeek(weekStart) {
@@ -446,6 +475,9 @@ function defaultState() {
 
     nextId: 1,
     schemaVersion: SCHEMA_VERSION,
+    updatedAt: nowIso(),
+    lastCloudSyncAt: null,
+    deviceId: makeDeviceId(),
 
     settings: {
       blocksPerSpin:          3,
@@ -486,7 +518,14 @@ function loadState() {
   }
 }
 
-function saveState() {
+function touchState(targetState) {
+  targetState.schemaVersion = SCHEMA_VERSION;
+  targetState.updatedAt = nowIso();
+  targetState.deviceId = targetState.deviceId || makeDeviceId();
+}
+
+function saveState(options = {}) {
+  if (options.touch !== false) touchState(state);
   saveStateObject(state);
 }
 
@@ -519,6 +558,9 @@ function normalizeV3State(input) {
   s.clipDrawsByDate = normalizeClipDraws(input.clipDrawsByDate);
   s.lastClipDrawn = CLIP_COLORS.includes(input.lastClipDrawn) ? input.lastClipDrawn : null;
   s.schemaVersion = SCHEMA_VERSION;
+  s.updatedAt = isValidIsoDate(input.updatedAt) ? input.updatedAt : (isValidIsoDate(input.lastUpdatedAt) ? input.lastUpdatedAt : def.updatedAt);
+  s.lastCloudSyncAt = isValidIsoDate(input.lastCloudSyncAt) ? input.lastCloudSyncAt : null;
+  s.deviceId = typeof input.deviceId === 'string' && input.deviceId.trim() ? input.deviceId : def.deviceId;
   return s;
 }
 
@@ -545,6 +587,9 @@ function migrateV2ToV3(input, rawBackup) {
     nextId: input.nextId || def.nextId,
     settings: normalizeSettings(input.settings),
     schemaVersion: SCHEMA_VERSION,
+    updatedAt: isValidIsoDate(input.updatedAt) ? input.updatedAt : def.updatedAt,
+    lastCloudSyncAt: isValidIsoDate(input.lastCloudSyncAt) ? input.lastCloudSyncAt : null,
+    deviceId: typeof input.deviceId === 'string' && input.deviceId.trim() ? input.deviceId : def.deviceId,
   };
 
   const oldTokens = Math.max(0, parseInt(input.sharedTokens || 0, 10) || 0);
@@ -639,43 +684,12 @@ function normalizeClipDraws(draws = {}) {
   return normalized;
 }
 
-function getRecentDateKeys(days) {
-  const dates = [];
-  const today = new Date();
-  for (let i = 0; i < days; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    dates.push(d.toISOString().slice(0, 10));
-  }
-  return new Set(dates);
-}
-
-function filterDateMapByRecentDays(map, recentDays) {
-  return Object.fromEntries(
-    Object.entries(map || {}).filter(([date]) => recentDays.has(date))
-  );
-}
-
-function filterArrayByDateKey(items, dateKey, recentDays) {
-  return (items || []).filter(item => {
-    if (!item || !item[dateKey]) return false;
-    const date = String(item[dateKey]).slice(0, 10);
-    return recentDays.has(date);
-  });
-}
-
-function exportStateForBackup(sourceState, days = EXPORT_DETAILS_DAYS) {
-  const recentDays = getRecentDateKeys(days);
+function exportStateForBackup(sourceState) {
   return {
     ...sourceState,
-    practiceByDate: filterDateMapByRecentDays(sourceState.practiceByDate, recentDays),
-    workoutByDate: filterDateMapByRecentDays(sourceState.workoutByDate, recentDays),
-    questionsByDate: filterDateMapByRecentDays(sourceState.questionsByDate, recentDays),
-    clipDrawsByDate: filterDateMapByRecentDays(sourceState.clipDrawsByDate, recentDays),
-    rewardBlocks: filterArrayByDateKey(sourceState.rewardBlocks, 'earnedAt', recentDays),
-    spentHistory: filterArrayByDateKey(sourceState.spentHistory, 'spentAt', recentDays),
-    discardedHistory: filterArrayByDateKey(sourceState.discardedHistory, 'discardedAt', recentDays),
-    bonusHistory: filterArrayByDateKey(sourceState.bonusHistory, 'completedAt', recentDays),
+    schemaVersion: SCHEMA_VERSION,
+    deviceId: sourceState.deviceId || makeDeviceId(),
+    updatedAt: sourceState.updatedAt || nowIso(),
   };
 }
 
@@ -859,10 +873,15 @@ function cashInSummary(options) {
 function checkDateReset() {
   const today = todayStr();
   const ws    = weekStartStr();
-  if (state.lastDate !== today) state.lastDate = today;
-  if (state.weekStart !== ws)   state.weekStart = ws;
+  let changed = false;
+  if (state.lastDate !== today) { state.lastDate = today; changed = true; }
+  if (state.weekStart !== ws)   { state.weekStart = ws; changed = true; }
+
+  const beforeDraws = JSON.stringify(state.clipDrawsByDate || {});
   state.clipDrawsByDate = normalizeClipDraws(state.clipDrawsByDate);
-  saveState();
+  if (JSON.stringify(state.clipDrawsByDate || {}) !== beforeDraws) changed = true;
+
+  if (changed) saveState({ touch: false });
 }
 
 /* ═══ Screen navigation ══════════════════════════════════════════════════ */
@@ -1110,6 +1129,7 @@ function spendSelectedBlocks() {
   state.rewardBlocks = state.rewardBlocks.filter(block => !selectedSet.has(block.id));
   state.spentHistory.push({
     id: state.nextId++,
+    blockIds: selectedBlocks.map(block => block.id),
     blocksSpent: selectedBlocks.length,
     minutesSpent: selectedBlocks.length * 30,
     spentAt: new Date().toISOString(),
@@ -1185,6 +1205,237 @@ function renderSettings() {
   document.getElementById('set-clip-bag-val').textContent =
     `${state.clipBag.template.red || 0} normal, ${state.clipBag.template.gold || 0} gold`;
   document.getElementById('set-cap-val').textContent       = `${state.settings.weeklyRewardCapMinutes} min`;
+  renderCloudBackupSection();
+}
+
+let cloudRenderNonce = 0;
+let cloudStatusMessage = '';
+let pendingCloudChoiceState = null;
+
+function setCloudStatusMessage(message) {
+  cloudStatusMessage = message || '';
+  renderCloudBackupSection();
+}
+
+function setCloudPane(id, visible) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('hidden', !visible);
+}
+
+function setCloudBusy(isBusy) {
+  [
+    'cloud-login-btn',
+    'cloud-sync-btn',
+    'cloud-load-btn',
+    'cloud-save-btn',
+    'cloud-signout-btn',
+    'cloud-choice-load',
+    'cloud-choice-overwrite',
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = isBusy;
+  });
+}
+
+function fmtCloudTime(isoStr) {
+  if (!isoStr) return 'Never';
+  const d = new Date(isoStr);
+  if (Number.isNaN(d.getTime())) return 'Never';
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+async function renderCloudBackupSection() {
+  const card = document.getElementById('cloud-backup-card');
+  if (!card) return;
+  const nonce = ++cloudRenderNonce;
+  const statusEl = document.getElementById('cloud-status');
+
+  if (!isCloudConfigured()) {
+    setCloudPane('cloud-not-configured', true);
+    setCloudPane('cloud-signed-out', false);
+    setCloudPane('cloud-signed-in', false);
+    if (statusEl) statusEl.textContent = 'Cloud backup not configured.';
+    return;
+  }
+
+  if (statusEl) statusEl.textContent = cloudStatusMessage || 'Checking cloud backup...';
+
+  try {
+    const user = await getCurrentUser();
+    if (nonce !== cloudRenderNonce) return;
+
+    setCloudPane('cloud-not-configured', false);
+    setCloudPane('cloud-signed-out', !user);
+    setCloudPane('cloud-signed-in', !!user);
+
+    if (!user) {
+      if (statusEl) statusEl.textContent = cloudStatusMessage || 'Cloud Backup: Not signed in';
+      return;
+    }
+
+    document.getElementById('cloud-signed-in-email').textContent = user.email || user.id;
+    document.getElementById('cloud-last-sync').textContent = fmtCloudTime(state.lastCloudSyncAt);
+    if (statusEl) statusEl.textContent = cloudStatusMessage || 'Cloud Backup: Signed in';
+  } catch (err) {
+    if (nonce !== cloudRenderNonce) return;
+    setCloudPane('cloud-not-configured', false);
+    setCloudPane('cloud-signed-out', true);
+    setCloudPane('cloud-signed-in', false);
+    if (statusEl) statusEl.textContent = `Cloud error: ${err.message || 'Unable to check session.'}`;
+  }
+}
+
+function saveLocalCloudSnapshot(reason) {
+  try {
+    localStorage.setItem(CLOUD_LOCAL_SNAPSHOT_KEY, JSON.stringify({
+      reason,
+      createdAt: nowIso(),
+      state,
+    }));
+  } catch {
+    // Best-effort safety copy only.
+  }
+}
+
+function applySyncedState(nextState, reason) {
+  saveLocalCloudSnapshot(reason);
+  state = normalizeState(nextState);
+  state.schemaVersion = SCHEMA_VERSION;
+  saveState({ touch: false });
+  selectedRewardBlockIds.clear();
+  renderScreen(currentScreen);
+  renderSettings();
+}
+
+async function runCloudAction(action) {
+  if (!isCloudConfigured()) {
+    setCloudStatusMessage('Cloud backup not configured.');
+    return;
+  }
+  if (navigator.onLine === false) {
+    setCloudStatusMessage('Offline. Cloud sync will be available next time you are online.');
+    return;
+  }
+
+  setCloudBusy(true);
+  try {
+    await action();
+  } catch (err) {
+    setCloudStatusMessage(`Cloud error: ${err.message || 'Something went wrong.'}`);
+  } finally {
+    setCloudBusy(false);
+    renderCloudBackupSection();
+  }
+}
+
+async function handleCloudLogin() {
+  await runCloudAction(async () => {
+    const email = document.getElementById('cloud-email-input').value.trim();
+    if (!email) {
+      setCloudStatusMessage('Enter an email first.');
+      return;
+    }
+    await signInWithOtp(email);
+    setCloudStatusMessage('Login link sent. Check your email on this device.');
+  });
+}
+
+async function handleCloudSignOut() {
+  await runCloudAction(async () => {
+    await cloudSignOut();
+    setCloudStatusMessage('Signed out of cloud backup.');
+  });
+}
+
+function showCloudChoiceSheet(cloudState) {
+  pendingCloudChoiceState = cloudState;
+  showSheet('cloud-choice-sheet');
+}
+
+async function loadPendingCloudChoice() {
+  const cloudState = pendingCloudChoiceState;
+  if (!cloudState) return;
+  pendingCloudChoiceState = null;
+  hideSheet('cloud-choice-sheet');
+  const nextState = markCloudSync({
+    ...cloudState,
+    deviceId: state.deviceId || cloudState.deviceId,
+  });
+  applySyncedState(nextState, 'before-cloud-sync');
+  setCloudStatusMessage('Cloud backup loaded onto this device.');
+}
+
+async function overwriteCloudWithLocalChoice() {
+  pendingCloudChoiceState = null;
+  hideSheet('cloud-choice-sheet');
+  await runCloudAction(async () => {
+    const saved = await saveCloudState(state);
+    applySyncedState(saved, 'before-cloud-sync');
+    setCloudStatusMessage('Local state saved to cloud.');
+  });
+}
+
+async function handleCloudSyncNow() {
+  await runCloudAction(async () => {
+    const result = await syncWithCloud(state);
+    if (result.needsChoice) {
+      showCloudChoiceSheet(result.cloudState);
+      setCloudStatusMessage('Cloud backup found. Choose whether to load it or keep local.');
+      return;
+    }
+    applySyncedState(result.state, 'before-cloud-sync');
+    setCloudStatusMessage(result.action === 'merged' ? 'Synced local and cloud state.' : 'Saved local state to cloud.');
+  });
+}
+
+async function handleLoadCloudBackup() {
+  await runCloudAction(async () => {
+    const cloudState = await loadCloudState();
+    if (!cloudState || isEffectivelyEmptyState(cloudState)) {
+      setCloudStatusMessage('No cloud backup found yet.');
+      return;
+    }
+    showConfirm('Replace this device with the cloud backup?', () => {
+      const nextState = markCloudSync({
+        ...cloudState,
+        deviceId: state.deviceId || cloudState.deviceId,
+      });
+      applySyncedState(nextState, 'before-cloud-load');
+      setCloudStatusMessage('Cloud backup loaded onto this device.');
+    });
+  });
+}
+
+async function handleSaveLocalToCloud() {
+  await runCloudAction(async () => {
+    const saved = await saveCloudState(state);
+    applySyncedState(saved, 'before-cloud-save');
+    setCloudStatusMessage('Local state saved to cloud.');
+  });
+}
+
+async function maybeRunDailyCloudSync() {
+  if (!isCloudConfigured() || navigator.onLine === false || !shouldDailySync(state)) return;
+
+  try {
+    const user = await getCurrentUser();
+    if (!user) return;
+    const result = await syncWithCloud(state);
+    if (result.needsChoice) {
+      showCloudChoiceSheet(result.cloudState);
+      setCloudStatusMessage('Cloud backup found. Choose whether to load it or keep local.');
+      return;
+    }
+    applySyncedState(result.state, 'before-daily-cloud-sync');
+    setCloudStatusMessage('Daily cloud sync complete.');
+  } catch (err) {
+    setCloudStatusMessage(`Cloud error: ${err.message || 'Daily sync skipped.'}`);
+  }
 }
 
 /* ═══ DEFICIT DETAIL SHEET ═══════════════════════════════════════════════ */
@@ -1927,6 +2178,17 @@ function initEvents() {
   });
   document.getElementById('set-reset').addEventListener('click', resetApp);
 
+  document.getElementById('cloud-login-btn').addEventListener('click', handleCloudLogin);
+  document.getElementById('cloud-email-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') handleCloudLogin();
+  });
+  document.getElementById('cloud-sync-btn').addEventListener('click', handleCloudSyncNow);
+  document.getElementById('cloud-load-btn').addEventListener('click', handleLoadCloudBackup);
+  document.getElementById('cloud-save-btn').addEventListener('click', handleSaveLocalToCloud);
+  document.getElementById('cloud-signout-btn').addEventListener('click', handleCloudSignOut);
+  document.getElementById('cloud-choice-load').addEventListener('click', loadPendingCloudChoice);
+  document.getElementById('cloud-choice-overwrite').addEventListener('click', overwriteCloudWithLocalChoice);
+
   function syncSpinOverlayAnchorIfOpen() {
     const ov = document.getElementById('spin-overlay');
     if (ov && !ov.classList.contains('hidden')) positionSpinOverlayAnchor();
@@ -1953,4 +2215,11 @@ document.addEventListener('DOMContentLoaded', () => {
   checkDateReset();
   initEvents();
   showScreen('today');
+  if (isCloudConfigured()) {
+    onAuthStateChange(() => {
+      renderCloudBackupSection();
+      maybeRunDailyCloudSync();
+    });
+    maybeRunDailyCloudSync();
+  }
 });

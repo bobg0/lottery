@@ -517,7 +517,7 @@
     .empty-state { font-size: 14px; color: var(--muted); padding: 12px 0; text-align: center; }
     .warn-note { font-size: 13px; color: var(--warn-border); margin-top: 8px; }
   </style>
-  <script type="module" crossorigin src="/lottery/assets/index-x897ecFo.js"></script>
+  <script type="module" crossorigin src="/lottery/assets/index-dqed0jtn.js"></script>
 </head>
 <body>
 <div id="app">
@@ -653,7 +653,11 @@
       </div>
       <div id="cloud-signed-out" class="hidden">
         <input class="form-input" type="email" id="cloud-email-input" inputmode="email" autocomplete="email" placeholder="Email" />
-        <button class="btn btn-solid btn-full" id="cloud-login-btn">Send Login Link</button>
+        <input class="form-input" type="password" id="cloud-password-input" autocomplete="current-password" placeholder="Password" />
+        <div class="btn-pair">
+          <button class="btn btn-solid" id="cloud-login-btn">Log In</button>
+          <button class="btn btn-outline" id="cloud-signup-btn">Sign Up</button>
+        </div>
         <div class="cloud-note">Cloud backup stores one latest copy of your app state. The app still works offline.</div>
       </div>
       <div id="cloud-signed-in" class="hidden">
